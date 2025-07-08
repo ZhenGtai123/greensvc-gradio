@@ -120,10 +120,12 @@ def upload_metric_code(metric_name: str, code_file) -> str:
         if not metric_name or code_file is None:
             return "请输入指标名称并选择代码文件"
         
-        # 保存代码文件
-        code_content = code_file.read()
-        if isinstance(code_content, bytes):
-            code_content = code_content.decode('utf-8')
+        # Gradio File组件返回的是文件路径，不是文件对象
+        file_path = code_file.name if hasattr(code_file, 'name') else code_file
+        
+        # 读取代码文件内容
+        with open(file_path, 'r', encoding='utf-8') as f:
+            code_content = f.read()
             
         components['metrics_manager'].save_metric_code(metric_name, code_content)
         
@@ -174,18 +176,6 @@ def process_images(files) -> Tuple[str, pd.DataFrame, bool]:
         
     except Exception as e:
         return f"处理失败: {str(e)}", pd.DataFrame(), False
-
-def select_metrics(selected_indices: List[int]) -> str:
-    """选择要使用的指标"""
-    global app_state
-    
-    try:
-        all_metrics = components['metrics_manager'].get_all_metrics()
-        app_state['selected_metrics'] = [all_metrics[i] for i in selected_indices]
-        
-        return f"已选择 {len(app_state['selected_metrics'])} 个指标"
-    except Exception as e:
-        return f"选择失败: {str(e)}"
 
 def run_vision_analysis(semantic_classes: str, semantic_countability: str, 
                        openness_list: str) -> Tuple[str, List]:
@@ -343,14 +333,15 @@ def create_interface():
                     metrics_library = gr.Dataframe(
                         label="所有可用指标",
                         interactive=False,
-                        max_rows=10
                     )
                 
                 gr.Markdown("### 选择要使用的指标")
+                gr.Markdown("只有已上传代码的指标才能被选择")
                 selected_indices = gr.CheckboxGroup(
-                    label="选择指标（输入索引号）",
+                    label="选择指标（勾选要使用的指标）",
                     choices=[],
-                    type="index"
+                    value=[],
+                    interactive=True
                 )
                 select_btn = gr.Button("确认选择", variant="primary")
                 selection_status = gr.Textbox(label="选择状态")
@@ -364,11 +355,28 @@ def create_interface():
                     update_status = gr.Textbox(label="更新状态")
                 
                 gr.Markdown("### 上传指标代码")
+                gr.Markdown("上传Python代码文件，文件中需要包含 `calculate(vision_result)` 函数")
                 with gr.Row():
-                    metric_name_input = gr.Textbox(label="指标名称")
-                    code_file = gr.File(label="Python代码文件")
-                    upload_code_btn = gr.Button("上传代码")
-                    upload_status = gr.Textbox(label="上传状态")
+                    with gr.Column():
+                        # 显示所有指标的下拉列表
+                        metric_name_dropdown = gr.Dropdown(
+                            label="选择指标",
+                            choices=[],
+                            interactive=True
+                        )
+                        code_file = gr.File(
+                            label="Python代码文件",
+                            file_types=[".py"]
+                        )
+                    with gr.Column():
+                        upload_code_btn = gr.Button("上传代码", variant="primary")
+                        upload_status = gr.Textbox(label="上传状态")
+                
+                gr.Markdown("### 当前指标代码状态")
+                metrics_code_status = gr.Dataframe(
+                    label="指标代码状态",
+                    interactive=False
+                )
             
             # Tab 3: 图片上传与处理
             with gr.Tab("3. 图片上传与处理"):
@@ -417,8 +425,7 @@ def create_interface():
                 analysis_status = gr.Textbox(label="分析状态")
                 result_images = gr.Gallery(
                     label="分析结果示例", 
-                    columns=4,
-                    rows=3,
+                    columns=5,
                     object_fit="contain",
                     height="auto"
                 )
@@ -458,8 +465,45 @@ def create_interface():
         # 刷新指标库
         def refresh_metrics():
             df = load_metrics_library()
-            choices = [f"{i}: {row['metric name']}" for i, row in df.iterrows()]
-            return df, gr.update(choices=choices)
+            if df.empty:
+                return df, gr.update(choices=[], value=[])
+            
+            # 检查每个指标是否有对应的代码
+            choices = []
+            selectable_choices = []  # 只包含可选的项
+            metrics_with_status = []
+            
+            for i, row in df.iterrows():
+                metric_name = row['metric name']
+                has_code = components['metrics_manager'].has_metric_code(metric_name)
+                
+                # 创建带状态的指标数据
+                row_dict = row.to_dict()
+                row_dict['代码状态'] = '✓ 已上传' if has_code else '✗ 未上传'
+                metrics_with_status.append(row_dict)
+                
+                # 创建选项文本
+                if has_code:
+                    choice_text = f"{i}: {metric_name} [可用]"
+                    choices.append(choice_text)
+                    selectable_choices.append(choice_text)
+                else:
+                    choice_text = f"{i}: {metric_name} [需要上传代码]"
+                    choices.append(choice_text)
+                    # 不添加到selectable_choices，这样就不会显示为可选项
+            
+            # 创建新的DataFrame包含代码状态
+            df_with_status = pd.DataFrame(metrics_with_status)
+            
+            # 重新排列列，把代码状态放在前面
+            cols = df_with_status.columns.tolist()
+            if '代码状态' in cols:
+                cols.remove('代码状态')
+                cols = ['代码状态'] + cols
+                df_with_status = df_with_status[cols]
+            
+            # 只返回可选择的选项
+            return df_with_status, gr.update(choices=selectable_choices, value=[])
         
         refresh_btn.click(
             fn=refresh_metrics,
@@ -467,8 +511,44 @@ def create_interface():
         )
         
         # 选择指标
+        def select_metrics_wrapper(selected_items: List[str]) -> str:
+            """选择要使用的指标"""
+            global app_state
+            
+            try:
+                if not selected_items:
+                    return "请选择至少一个指标"
+                
+                all_metrics = components['metrics_manager'].get_all_metrics()
+                selected_metrics = []
+                skipped_metrics = []
+                
+                for selection in selected_items:
+                    # 提取索引号
+                    idx = int(selection.split(':')[0])
+                    metric = all_metrics[idx]
+                    metric_name = metric['metric name']
+                    
+                    # 检查是否有代码
+                    if components['metrics_manager'].has_metric_code(metric_name):
+                        selected_metrics.append(metric)
+                    else:
+                        skipped_metrics.append(metric_name)
+                
+                app_state['selected_metrics'] = selected_metrics
+                
+                status = f"已选择 {len(selected_metrics)} 个指标"
+                if skipped_metrics:
+                    status += f"\n跳过了 {len(skipped_metrics)} 个没有代码的指标: {', '.join(skipped_metrics[:3])}"
+                    if len(skipped_metrics) > 3:
+                        status += f" 等"
+                
+                return status
+            except Exception as e:
+                return f"选择失败: {str(e)}"
+        
         select_btn.click(
-            fn=select_metrics,
+            fn=select_metrics_wrapper,
             inputs=[selected_indices],
             outputs=[selection_status]
         )
@@ -480,11 +560,56 @@ def create_interface():
             outputs=[update_status]
         )
         
-        # 上传代码
+        # 更新指标下拉列表的函数
+        def update_metric_dropdown():
+            metrics = components['metrics_manager'].get_all_metrics()
+            choices = []
+            for metric in metrics:
+                metric_name = metric['metric name']
+                has_code = components['metrics_manager'].has_metric_code(metric_name)
+                status = "✓" if has_code else "✗"
+                choices.append(f"{status} {metric_name}")
+            return gr.update(choices=choices)
+        
+        # 获取指标代码状态
+        def get_metrics_code_status():
+            metrics = components['metrics_manager'].get_all_metrics()
+            status_data = []
+            for metric in metrics:
+                metric_name = metric['metric name']
+                has_code = components['metrics_manager'].has_metric_code(metric_name)
+                status_data.append({
+                    '指标名称': metric_name,
+                    '代码状态': '✓ 已上传' if has_code else '✗ 未上传',
+                    '类别': metric.get('Primary Category', ''),
+                    '数据输入': metric.get('Data Input', '')
+                })
+            return pd.DataFrame(status_data)
+        
+        # 修改上传代码函数以使用下拉选择
+        def upload_metric_code_from_dropdown(metric_selection: str, code_file) -> str:
+            if not metric_selection:
+                return "请选择一个指标"
+            
+            # 从选择中提取指标名称（去掉状态标记）
+            metric_name = metric_selection[2:] if metric_selection.startswith(('✓ ', '✗ ')) else metric_selection
+            
+            return upload_metric_code(metric_name, code_file)
+        
+        # 上传代码 - 更新绑定
         upload_code_btn.click(
-            fn=upload_metric_code,
-            inputs=[metric_name_input, code_file],
+            fn=upload_metric_code_from_dropdown,
+            inputs=[metric_name_dropdown, code_file],
             outputs=[upload_status]
+        ).then(
+            fn=get_metrics_code_status,
+            outputs=[metrics_code_status]
+        ).then(
+            fn=update_metric_dropdown,
+            outputs=[metric_name_dropdown]
+        ).then(
+            fn=refresh_metrics,
+            outputs=[metrics_library, selected_indices]
         )
         
         # 处理图片
@@ -521,7 +646,16 @@ def create_interface():
         )
         
         # 初始加载
-        app.load(fn=refresh_metrics, outputs=[metrics_library, selected_indices])
+        def initial_load():
+            df_metrics, choices_update = refresh_metrics()
+            dropdown_update = update_metric_dropdown()
+            code_status = get_metrics_code_status()
+            return df_metrics, choices_update, dropdown_update, code_status
+        
+        app.load(
+            fn=initial_load, 
+            outputs=[metrics_library, selected_indices, metric_name_dropdown, metrics_code_status]
+        )
     
     return app
 

@@ -51,6 +51,23 @@ def check_requirements():
             print("❌ 未找到环境配置文件")
             return False
     
+    # 检查指标库和代码目录
+    if not os.path.exists('data'):
+        os.makedirs('data', exist_ok=True)
+        print("✓ 创建数据目录")
+    
+    if not os.path.exists('data/metrics_code'):
+        os.makedirs('data/metrics_code', exist_ok=True)
+        print("✓ 创建指标代码目录")
+    
+    # 检查是否有示例指标代码
+    metrics_code_files = os.listdir('data/metrics_code') if os.path.exists('data/metrics_code') else []
+    if not metrics_code_files:
+        print("⚠️  未找到指标代码文件")
+        print("  提示：运行 python setup.py 创建示例代码")
+    else:
+        print(f"✓ 找到 {len(metrics_code_files)} 个指标代码文件")
+    
     print("✓ 系统要求检查通过")
     return True
 

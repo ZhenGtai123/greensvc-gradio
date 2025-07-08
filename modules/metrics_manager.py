@@ -193,8 +193,23 @@ class MetricsManager:
         try:
             code_path = self.get_metric_code_path(metric_name)
             
-            # 添加标准头部
-            full_code = f'''"""
+            # 检查代码是否包含必要的函数
+            has_calc_func = False
+            for func_name in ['calculate', 'calculate_metric', 'calc', 'main']:
+                if f'def {func_name}(' in code:
+                    has_calc_func = True
+                    break
+            
+            if not has_calc_func:
+                logger.error(f"代码中未找到必要的计算函数（calculate, calculate_metric, calc, 或 main）")
+                return False
+            
+            # 如果代码已经包含导入语句，不添加额外的头部
+            if 'import' in code[:200]:  # 检查开头部分
+                full_code = code
+            else:
+                # 添加标准头部
+                full_code = f'''"""
 指标计算代码: {metric_name}
 自动生成的代码文件
 """

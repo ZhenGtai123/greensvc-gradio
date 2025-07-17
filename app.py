@@ -1028,17 +1028,6 @@ def create_interface():
 
 # 启动应用
 if __name__ == "__main__":
-    # 创建初始指标库文件（如果不存在）
-    if not os.path.exists(CONFIG['metrics_library_path']):
-        # 从JSON创建Excel
-        import json
-        json_path = 'library_metrics.json'
-        if os.path.exists(json_path):
-            with open(json_path, 'r', encoding='utf-8') as f:
-                metrics_data = json.load(f)
-            df = pd.DataFrame(metrics_data)
-            df.to_excel(CONFIG['metrics_library_path'], index=False)
-    
     # 创建并启动应用
     app = create_interface()
     app.launch(

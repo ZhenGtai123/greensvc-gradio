@@ -13,40 +13,40 @@ logger = logging.getLogger(__name__)
 def create_metrics_report_tab(components: dict, app_state):
     """创建指标计算与报告Tab"""
     
-    with gr.Tab("5. 指标计算与报告"):
-        gr.Markdown("### 计算选定指标")
-        calc_btn = gr.Button("计算指标", variant="primary")
-        calc_status = gr.Textbox(label="计算状态")
-        metrics_results = gr.Dataframe(label="指标计算结果")
+    with gr.Tab("5. Metrics Calculation & Report"):
+        gr.Markdown("### Calculate Selected Metrics")
+        calc_btn = gr.Button("Calculate Metrics", variant="primary")
+        calc_status = gr.Textbox(label="Calculation Status")
+        metrics_results = gr.Dataframe(label="Metric Calculation Results")
         
-        gr.Markdown("### 生成分析报告")
+        gr.Markdown("### Generate Analysis Report")
         with gr.Row():
             include_heatmap_final = gr.Checkbox(
-                label="包含空间热力图",
+                label="Include Spatial Heatmap",
                 value=False
             )
             openai_key_2 = gr.Textbox(
-                label="OpenAI API Key（用于生成分析文本）",
+                label="OpenAI API Key (for AI-powered analysis)",
                 type="password",
                 placeholder="sk-..."
             )
         
-        generate_btn = gr.Button("生成报告", variant="primary")
-        report_status = gr.Textbox(label="报告状态")
-        report_file = gr.File(label="下载报告")
+        generate_btn = gr.Button("Generate Report", variant="primary")
+        report_status = gr.Textbox(label="Report Status")
+        report_file = gr.File(label="Download Report")
         
         # 事件处理函数
         def calculate_metrics() -> Tuple[str, pd.DataFrame]:
-            """计算选定的指标"""
+            """Calculate selected metrics"""
             try:
                 if not app_state.has_vision_results():
-                    return "请先进行视觉分析", pd.DataFrame()
+                    return "Please run vision analysis first", pd.DataFrame()
                 
                 selected_metrics = app_state.get_selected_metrics()
                 if not selected_metrics:
-                    return "请先选择指标", pd.DataFrame()
+                    return "Please select metrics first", pd.DataFrame()
                 
-                # 准备指标信息（包含required_images）
+                # Prepare metric info including required_images
                 metrics_info = {}
                 for metric in selected_metrics:
                     metric_name = metric['metric name']
@@ -56,32 +56,32 @@ def create_metrics_report_tab(components: dict, app_state):
                         'unit': metric.get('Unit', '')
                     }
                 
-                # 计算每个指标
+                # Calculate each metric
                 results = []
                 errors = []
                 
                 for img_path, vision_result in app_state.get_vision_results().items():
-                    img_metrics = {'图片': os.path.basename(img_path)}
+                    img_metrics = {'Image': os.path.basename(img_path)}
                     
                     for metric in selected_metrics:
                         metric_name = metric['metric name']
                         metric_info = metrics_info.get(metric_name, {})
                         
-                        # 使用改进的计算方法
+                        # Use improved calculation method
                         value = components['metrics_calculator'].calculate_metric(
                             metric_name,
                             vision_result,
-                            metric_info  # 传入指标信息
+                            metric_info
                         )
                         
                         if value is None:
-                            # 获取详细的错误信息
+                            # Get detailed error info
                             validation = components['metrics_calculator']._validate_required_images(
                                 vision_result,
                                 metric_info.get('required_images', '').split(',') if metric_info.get('required_images') else []
                             )
                             if not validation['valid']:
-                                errors.append(f"{metric_name}: 缺少图像 {validation['missing']}")
+                                errors.append(f"{metric_name}: Missing images {validation['missing']}")
                             value = 'N/A'
                         
                         img_metrics[metric_name] = value
@@ -91,22 +91,22 @@ def create_metrics_report_tab(components: dict, app_state):
                 df_results = pd.DataFrame(results)
                 app_state.set_metrics_results(df_results)
                 
-                status = "指标计算完成"
+                status = "Metric calculation completed"
                 if errors:
-                    status += f"\n\n注意：\n" + "\n".join(errors[:5])  # 显示前5个错误
+                    status += f"\n\nNote:\n" + "\n".join(errors[:5])  # Show first 5 errors
                     if len(errors) > 5:
-                        status += f"\n... 还有 {len(errors)-5} 个错误"
+                        status += f"\n... and {len(errors)-5} more errors"
                 
                 return status, df_results
                 
             except Exception as e:
-                return f"计算失败: {str(e)}", pd.DataFrame()
+                return f"Calculation failed: {str(e)}", pd.DataFrame()
         
         def generate_report(include_heatmap: bool, openai_key: str) -> Tuple[str, str]:
-            """生成分析报告"""
+            """Generate analysis report"""
             try:
                 if not app_state.has_metrics_results():
-                    return "没有可用的分析结果", ""
+                    return "No analysis results available", ""
                 
                 report_path = components['report_generator'].generate_report(
                     app_state.get_metrics_results(),
@@ -116,10 +116,10 @@ def create_metrics_report_tab(components: dict, app_state):
                     openai_key
                 )
                 
-                return "报告生成成功", report_path
+                return "Report generated successfully", report_path
                 
             except Exception as e:
-                return f"生成失败: {str(e)}", ""
+                return f"Generation failed: {str(e)}", ""
         
         def generate_final_report(include_heatmap, key):
             status, path = generate_report(include_heatmap, key)

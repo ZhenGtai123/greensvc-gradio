@@ -5,6 +5,7 @@
 import gradio as gr
 from .state import AppState
 from .tabs import (
+    create_api_config_tab,  # 添加这个导入
     create_metrics_recommendation_tab,
     create_metrics_management_tab,
     create_image_processing_tab,
@@ -33,6 +34,9 @@ def create_main_interface(components: dict, config: dict, app_state: AppState = 
         gr.Markdown("通过AI与空间视觉指标相结合，为城市绿地等空间的专业分析、科学决策与设计优化提供数据驱动工具")
         
         with gr.Tabs():
+            # 添加API配置标签页（放在第一个）
+            api_config_components = create_api_config_tab(components, app_state)
+            
             # Tab 1: 指标推荐与选择
             metrics_rec_components = create_metrics_recommendation_tab(components, app_state)
             

@@ -19,6 +19,7 @@ class AppState:
         self.metrics_results = pd.DataFrame()
         self.gps_data = {}
         self.components = None  # 存储初始化的组件
+        self.vision_api_url = None  
     
     def set_components(self, components: Dict):
         """设置组件引用"""

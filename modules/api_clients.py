@@ -21,7 +21,7 @@ class VisionModelClient:
     """视觉模型API客户端 - 增强版"""
     
     def __init__(self, base_url: str):
-        self.base_url = base_url.rstrip('/')
+        self.base_url = base_url.rstrip('/')  # 确保是public属性
         self.default_colors = self._get_default_colors()
         self._last_health_check = 0
         self._health_cache = None

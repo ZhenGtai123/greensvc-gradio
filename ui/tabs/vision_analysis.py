@@ -75,14 +75,36 @@ DEFAULT_COLORS = {
     "vehicle": "#0066c8"
 }
 
-def hex_to_rgb(hex_color: str) -> List[int]:
-    """将16进制颜色转换为RGB列表"""
+def hex_to_rgb(hex_color: str, bgr_mode: bool = True) -> List[int]:
+    """将16进制颜色转换为RGB或BGR列表
+    
+    Args:
+        hex_color: 16进制颜色字符串
+        bgr_mode: 如果为True，返回BGR格式（用于OpenCV）
+    """
     hex_color = hex_color.lstrip('#')
-    return list(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+    r, g, b = (int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+    
+    if bgr_mode:
+        # OpenCV使用BGR格式
+        return [b, g, r]
+    else:
+        # 标准RGB格式
+        return [r, g, b]
 
-def rgb_to_hex(rgb: List[int]) -> str:
-    """将RGB列表转换为16进制颜色"""
-    return '#{:02x}{:02x}{:02x}'.format(rgb[0], rgb[1], rgb[2])
+def rgb_to_hex(rgb: List[int], from_bgr: bool = False) -> str:
+    """将RGB或BGR列表转换为16进制颜色
+    
+    Args:
+        rgb: RGB或BGR颜色列表
+        from_bgr: 如果为True，输入是BGR格式
+    """
+    if from_bgr:
+        # 如果输入是BGR，转换为RGB
+        b, g, r = rgb
+        return '#{:02x}{:02x}{:02x}'.format(r, g, b)
+    else:
+        return '#{:02x}{:02x}{:02x}'.format(rgb[0], rgb[1], rgb[2])
 
 def analyze_image_with_colors(vision_client, image_path: str, classes: List[str], 
                               countability: List[int], openness: List[int],
@@ -166,7 +188,7 @@ def analyze_image_with_colors(vision_client, image_path: str, classes: List[str]
 def create_vision_analysis_tab(components: dict, app_state, config: dict):
     """创建视觉分析Tab"""
     
-    with gr.Tab("4. 视觉分析"):  
+    with gr.Tab("视觉分析"):  # 使用简单的名称，不带数字
         # 存储用户自定义颜色的状态
         custom_colors = gr.State({})
         
@@ -216,20 +238,26 @@ def create_vision_analysis_tab(components: dict, app_state, config: dict):
             gr.Markdown("""
             **颜色配置说明：**
             - 点击"生成颜色配置"按钮查看当前类别对应的颜色
-            - 可以通过颜色选择器修改每个类别的颜色
-            - 修改后的颜色会自动应用到分析结果中
+            - 在下方的文本框中修改颜色代码（格式：类别名=颜色代码）
+            - 颜色代码支持16进制格式（如 #FF0000）
+            - 修改后点击"应用颜色配置"来更新颜色
             """)
             
             generate_colors_btn = gr.Button("🎨 生成颜色配置", variant="secondary")
             
-            # 动态生成的颜色配置界面
-            color_config_container = gr.HTML("")
+            # 颜色配置显示
+            color_config_display = gr.HTML("")
             
-            # 隐藏的颜色输入组件（用于动态更新）
-            color_inputs_container = gr.Column(visible=False)
-            with color_inputs_container:
-                # 这个容器将被动态填充
-                color_inputs = gr.State([])
+            # 颜色编辑区域
+            color_edit_text = gr.Textbox(
+                label="编辑颜色配置（每行一个：类别名=#颜色代码）",
+                lines=10,
+                visible=False,
+                placeholder="sky=#06e6e6\nlawn=#04fa07\ntrees=#04c803"
+            )
+            
+            # 应用按钮
+            apply_colors_btn = gr.Button("应用颜色配置", variant="secondary", visible=False)
             
             # 颜色预览
             with gr.Row():
@@ -307,13 +335,14 @@ def create_vision_analysis_tab(components: dict, app_state, config: dict):
             try:
                 classes = [c.strip() for c in classes_text.split('\n') if c.strip()]
                 if not classes:
-                    return "", current_custom_colors, gr.update(visible=False), gr.update(visible=False)
+                    return "", "", current_custom_colors, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
                 
                 # 初始化或更新自定义颜色字典
                 if not current_custom_colors:
                     current_custom_colors = {}
                 
                 # 为每个类别设置颜色
+                color_text_lines = []
                 for i, cls in enumerate(classes):
                     if cls not in current_custom_colors:
                         # 使用预设颜色或生成新颜色
@@ -323,6 +352,8 @@ def create_vision_analysis_tab(components: dict, app_state, config: dict):
                             # 为新类别生成颜色
                             hue = (i * 360 / len(classes)) % 360
                             current_custom_colors[cls] = f"#{int(hue/360*255):02x}{int((1-abs((hue/60)%2-1))*255):02x}{128:02x}"
+                    
+                    color_text_lines.append(f"{cls}={current_custom_colors[cls]}")
                 
                 # 生成HTML表格显示颜色配置
                 html = """
@@ -346,11 +377,10 @@ def create_vision_analysis_tab(components: dict, app_state, config: dict):
                 <table class="color-table">
                     <thead>
                         <tr>
-                            <th width="5%">序号</th>
-                            <th width="35%">类别名称</th>
-                            <th width="20%">当前颜色</th>
-                            <th width="20%">颜色代码</th>
-                            <th width="20%">修改颜色</th>
+                            <th width="10%">序号</th>
+                            <th width="40%">类别名称</th>
+                            <th width="25%">当前颜色</th>
+                            <th width="25%">颜色代码</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -364,29 +394,117 @@ def create_vision_analysis_tab(components: dict, app_state, config: dict):
                             <td><strong>{cls}</strong></td>
                             <td><span class="color-preview" style="background-color: {color};"></span></td>
                             <td><code>{color}</code></td>
-                            <td><input type="color" value="{color}" id="color_{i}" 
-                                onchange="updateColorForClass('{cls}', this.value)"
-                                style="width: 60px; height: 30px; cursor: pointer;"></td>
                         </tr>
                     """
                 
                 html += """
                     </tbody>
                 </table>
-                <script>
-                    function updateColorForClass(className, color) {
-                        // 这里可以添加实时更新的JavaScript代码
-                        console.log('Updated color for', className, 'to', color);
-                    }
-                </script>
+                <p style="color: #666; font-size: 0.9em;">
+                    💡 提示：在下方文本框中修改颜色，格式为 "类别名=#颜色代码"，然后点击"应用颜色配置"
+                </p>
                 """
                 
-                # 显示预览和重置按钮
-                return html, current_custom_colors, gr.update(visible=True), gr.update(visible=True)
+                # 生成可编辑的文本
+                color_edit_text = "\n".join(color_text_lines)
+                
+                # 显示编辑框和按钮
+                return (
+                    html, 
+                    color_edit_text, 
+                    current_custom_colors,
+                    gr.update(visible=True),  # color_edit_text
+                    gr.update(visible=True),  # apply_colors_btn
+                    gr.update(visible=True),  # color_preview_btn
+                    gr.update(visible=True)   # reset_colors_btn
+                )
                 
             except Exception as e:
                 logger.error(f"Error generating color config: {e}")
-                return "生成颜色配置失败", current_custom_colors, gr.update(visible=False), gr.update(visible=False)
+                return (
+                    "生成颜色配置失败", 
+                    "", 
+                    current_custom_colors,
+                    gr.update(visible=False),
+                    gr.update(visible=False),
+                    gr.update(visible=False),
+                    gr.update(visible=False)
+                )
+        
+        def apply_color_config(color_text, classes_text):
+            """应用用户编辑的颜色配置"""
+            try:
+                new_colors = {}
+                lines = color_text.strip().split('\n')
+                
+                for line in lines:
+                    if '=' in line:
+                        parts = line.split('=', 1)
+                        if len(parts) == 2:
+                            cls = parts[0].strip()
+                            color = parts[1].strip()
+                            # 验证颜色格式
+                            if color.startswith('#') and len(color) in [4, 7]:
+                                new_colors[cls] = color
+                
+                # 重新生成显示
+                classes = [c.strip() for c in classes_text.split('\n') if c.strip()]
+                html = generate_color_display(classes, new_colors)
+                
+                return new_colors, html, "✅ 颜色配置已更新"
+                
+            except Exception as e:
+                logger.error(f"Error applying color config: {e}")
+                return gr.State(), "", f"❌ 应用失败: {str(e)}"
+        
+        def generate_color_display(classes, colors_dict):
+            """生成颜色显示HTML"""
+            html = """
+            <style>
+                .color-table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+                .color-table th, .color-table td { 
+                    padding: 8px; 
+                    border: 1px solid #ddd; 
+                    text-align: left; 
+                }
+                .color-table th { background-color: #f5f5f5; font-weight: bold; }
+                .color-preview { 
+                    width: 60px; 
+                    height: 25px; 
+                    border: 1px solid #ccc; 
+                    display: inline-block; 
+                    vertical-align: middle;
+                }
+                .class-index { color: #666; font-size: 0.9em; }
+            </style>
+            <table class="color-table">
+                <thead>
+                    <tr>
+                        <th width="10%">序号</th>
+                        <th width="40%">类别名称</th>
+                        <th width="25%">当前颜色</th>
+                        <th width="25%">颜色代码</th>
+                    </tr>
+                </thead>
+                <tbody>
+            """
+            
+            for i, cls in enumerate(classes, 1):
+                color = colors_dict.get(cls, "#808080")
+                html += f"""
+                    <tr>
+                        <td class="class-index">{i}</td>
+                        <td><strong>{cls}</strong></td>
+                        <td><span class="color-preview" style="background-color: {color};"></span></td>
+                        <td><code>{color}</code></td>
+                    </tr>
+                """
+            
+            html += """
+                </tbody>
+            </table>
+            """
+            return html
         
         def preview_colors(classes_text, current_custom_colors):
             """生成颜色映射预览图"""
@@ -482,8 +600,9 @@ def create_vision_analysis_tab(components: dict, app_state, config: dict):
                         hue = (i * 360 / len(classes)) % 360
                         color_hex = f"#{int(hue/360*255):02x}{int((1-abs((hue/60)%2-1))*255):02x}{128:02x}"
                     
-                    # 转换为RGB列表格式（API需要的格式是 {"1": [r,g,b], "2": [r,g,b], ...}）
-                    semantic_colors[str(i+1)] = hex_to_rgb(color_hex)
+                    # 转换为BGR列表格式（OpenCV使用BGR而不是RGB）
+                    # API需要的格式是 {"1": [b,g,r], "2": [b,g,r], ...}
+                    semantic_colors[str(i+1)] = hex_to_rgb(color_hex, bgr_mode=True)
                 
                 # 添加背景颜色（索引0）
                 semantic_colors["0"] = [0, 0, 0]
@@ -608,7 +727,21 @@ def create_vision_analysis_tab(components: dict, app_state, config: dict):
         generate_colors_btn.click(
             generate_color_config,
             inputs=[semantic_classes, custom_colors],
-            outputs=[color_config_container, custom_colors, color_preview_btn, reset_colors_btn]
+            outputs=[
+                color_config_display,
+                color_edit_text,
+                custom_colors,
+                color_edit_text,  # visibility
+                apply_colors_btn,  # visibility
+                color_preview_btn, # visibility
+                reset_colors_btn   # visibility
+            ]
+        )
+        
+        apply_colors_btn.click(
+            apply_color_config,
+            inputs=[color_edit_text, semantic_classes],
+            outputs=[custom_colors, color_config_display, analysis_status]
         )
         
         color_preview_btn.click(
@@ -627,7 +760,15 @@ def create_vision_analysis_tab(components: dict, app_state, config: dict):
         ).then(
             generate_color_config,
             inputs=[semantic_classes, custom_colors],
-            outputs=[color_config_container, custom_colors, color_preview_btn, reset_colors_btn]
+            outputs=[
+                color_config_display,
+                color_edit_text,
+                custom_colors,
+                color_edit_text,  # visibility
+                apply_colors_btn,  # visibility
+                color_preview_btn, # visibility
+                reset_colors_btn   # visibility
+            ]
         )
         
         analyze_btn.click(

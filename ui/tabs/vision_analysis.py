@@ -7,7 +7,7 @@ import gradio as gr
 import os
 import logging
 import json
-import requests  # 添加requests导入
+import requests
 from typing import Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
@@ -166,10 +166,10 @@ def analyze_image_with_colors(vision_client, image_path: str, classes: List[str]
 def create_vision_analysis_tab(components: dict, app_state, config: dict):
     """创建视觉分析Tab"""
     
-    # 存储用户自定义颜色的状态
-    custom_colors = gr.State({})
-    
-    with gr.Tab("4. 视觉分析"):
+    with gr.Tab("4. 视觉分析"):  
+        # 存储用户自定义颜色的状态
+        custom_colors = gr.State({})
+        
         gr.Markdown("""
         ### 🎯 视觉分析
         使用AI模型进行语义分割、深度估计和前中背景分割。

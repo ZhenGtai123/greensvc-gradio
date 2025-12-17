@@ -5,10 +5,9 @@
 import gradio as gr
 from .state import AppState
 from .tabs import (
-    create_api_config_tab,  # 添加这个导入
+    create_api_config_tab,
     create_metrics_recommendation_tab,
     create_metrics_management_tab,
-    create_image_processing_tab,
     create_vision_analysis_tab,
     create_metrics_report_tab
 )
@@ -22,11 +21,9 @@ def create_main_interface(components: dict, config: dict, app_state: AppState = 
         config: 配置信息
         app_state: 应用状态管理器
     """
-    # 如果没有传入app_state，创建一个新的
     if app_state is None:
         app_state = AppState()
     
-    # 设置组件到状态管理器
     app_state.set_components(components)
     
     with gr.Blocks(title="城市绿地空间视觉分析系统") as app:
@@ -34,7 +31,7 @@ def create_main_interface(components: dict, config: dict, app_state: AppState = 
         gr.Markdown("通过AI与空间视觉指标相结合，为城市绿地等空间的专业分析、科学决策与设计优化提供数据驱动工具")
         
         with gr.Tabs():
-            # 添加API配置标签页（放在第一个）
+            # Tab 0: API配置
             api_config_components = create_api_config_tab(components, app_state)
             
             # Tab 1: 指标推荐与选择
@@ -43,13 +40,10 @@ def create_main_interface(components: dict, config: dict, app_state: AppState = 
             # Tab 2: 指标库管理
             metrics_mgmt_components = create_metrics_management_tab(components, app_state)
             
-            # Tab 3: 图片上传与处理
-            image_proc_components = create_image_processing_tab(components, app_state)
-            
-            # Tab 4: 视觉分析
+            # Tab 3: 视觉分析（合并了图片上传）
             vision_analysis_components = create_vision_analysis_tab(components, app_state, config)
             
-            # Tab 5: 指标计算与报告
+            # Tab 4: 指标计算与报告
             report_components = create_metrics_report_tab(components, app_state)
         
         # 初始加载函数

@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 def create_metrics_report_tab(components: dict, app_state):
     """创建指标计算与报告Tab"""
     
-    with gr.Tab("5. Metrics Calculation & Report"):
+    with gr.Tab("4. Metrics Calculation & Report"):
         gr.Markdown("### Calculate Selected Metrics")
         calc_btn = gr.Button("Calculate Metrics", variant="primary")
         calc_status = gr.Textbox(label="Calculation Status")

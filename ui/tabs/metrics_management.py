@@ -1,151 +1,193 @@
 """
-Tab 2: 指标库管理
+Tab 3: Metrics Library Management
+Uses MetricsManager from modules for business logic
 """
 
 import gradio as gr
 import pandas as pd
-from typing import Dict
+import os
 import logging
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-def create_metrics_management_tab(components: dict, app_state):
-    """创建指标库管理Tab"""
+
+def create_metrics_management_tab(components: dict, app_state, config):
+    """Create Metrics Library Management Tab"""
     
-    with gr.Tab("2. 指标库管理"):
-        gr.Markdown("### 更新指标库")
-        with gr.Row():
-            metrics_file = gr.File(label="上传新的指标库文件 (Excel)")
-            update_lib_btn = gr.Button("更新指标库")
-            update_status = gr.Textbox(label="更新状态")
+    # Get MetricsManager from components
+    metrics_manager = components.get('metrics_manager')
+    
+    with gr.Tab("3. Metrics Library"):
+        gr.Markdown("""
+        ## 📚 Metrics Library Management
+        Upload and manage indicator calculators (calculator_layer_IND_XXX.py format)
+        """)
         
-        gr.Markdown("### 上传指标代码")
-        gr.Markdown("上传Python代码文件，文件中需要包含 `calculate(vision_result)` 函数")
-        with gr.Row():
-            with gr.Column():
-                # 显示所有指标的下拉列表
-                metric_name_dropdown = gr.Dropdown(
-                    label="选择指标",
-                    choices=[],
-                    interactive=True
-                )
-                code_file = gr.File(
-                    label="Python代码文件",
+        # ===== Upload Calculator =====
+        with gr.Group():
+            gr.Markdown("### 📤 Upload Calculator")
+            gr.Markdown("""
+            Upload calculator files in Stage 2.5 format:
+            - Filename: `calculator_layer_IND_XXX.py`
+            - Must contain: `INDICATOR` dict and `calculate_indicator(image_path)` function
+            """)
+            
+            with gr.Row():
+                calc_file = gr.File(
+                    label="Calculator File (.py)",
                     file_types=[".py"]
                 )
-            with gr.Column():
-                upload_code_btn = gr.Button("上传代码", variant="primary")
-                upload_status = gr.Textbox(label="上传状态")
+                upload_btn = gr.Button("Upload", variant="primary")
+            
+            upload_status = gr.Textbox(label="Status", interactive=False)
         
-        gr.Markdown("### 当前指标代码状态")
-        metrics_code_status = gr.Dataframe(
-            label="指标代码状态",
-            interactive=False
-        )
+        # ===== Calculator Library =====
+        with gr.Group():
+            gr.Markdown("### 📋 Installed Calculators")
+            
+            refresh_btn = gr.Button("🔄 Refresh")
+            
+            calc_table = gr.Dataframe(
+                headers=["ID", "Name", "Unit", "Type", "Direction", "Category"],
+                label="Available Calculators",
+                interactive=False,
+                wrap=True
+            )
         
-        # 事件处理函数
-        def update_metrics_library(file) -> str:
-            """更新指标库文件"""
+        # ===== Calculator Details =====
+        with gr.Accordion("Calculator Details", open=False):
+            select_calc = gr.Dropdown(label="Select Calculator", choices=[])
+            
+            with gr.Row():
+                calc_id = gr.Textbox(label="Indicator ID", interactive=False)
+                calc_name = gr.Textbox(label="Name", interactive=False)
+            
+            with gr.Row():
+                calc_unit = gr.Textbox(label="Unit", interactive=False)
+                calc_type = gr.Textbox(label="Calc Type", interactive=False)
+            
+            calc_formula = gr.Textbox(label="Formula", lines=2, interactive=False)
+            calc_definition = gr.Textbox(label="Definition", lines=2, interactive=False)
+            
+            with gr.Row():
+                view_btn = gr.Button("View Code")
+                delete_btn = gr.Button("Delete", variant="stop")
+            
+            code_display = gr.Code(label="Source Code", language="python", visible=False)
+        
+        # ===== Legacy Indicators Excel =====
+        with gr.Accordion("Import from Excel (Legacy Format)", open=False):
+            gr.Markdown("Import indicator definitions from A_indicators.xlsx")
+            
+            excel_file = gr.File(label="Indicators Excel (.xlsx)", file_types=[".xlsx"])
+            import_btn = gr.Button("Import")
+            import_status = gr.Textbox(label="Import Status", interactive=False)
+        
+        # ========== Event Handlers ==========
+        
+        def upload_calculator(file):
+            if not file:
+                return "Please select a file"
+            
+            if not metrics_manager:
+                return "❌ MetricsManager not initialized"
+            
+            indicator_id = metrics_manager.add_calculator(file.name)
+            if indicator_id:
+                calc = metrics_manager.get_calculator(indicator_id)
+                return f"✅ Uploaded: {calc.get('filename', '')}\n   ID: {indicator_id}\n   Name: {calc.get('name', '')}"
+            return "❌ Upload failed. Check file format."
+        
+        def refresh_library():
+            if not metrics_manager:
+                return pd.DataFrame(), gr.update(choices=[])
+            
+            # Rescan calculators
+            metrics_manager.scan_calculators()
+            
+            # Build table data
+            data = []
+            choices = []
+            
+            for calc in metrics_manager.get_all_calculators():
+                data.append([
+                    calc.get('id', ''),
+                    calc.get('name', ''),
+                    calc.get('unit', ''),
+                    calc.get('calc_type', ''),
+                    calc.get('target_direction', ''),
+                    calc.get('category', '')
+                ])
+                choices.append(f"{calc.get('id', '')}: {calc.get('name', '')}")
+            
+            df = pd.DataFrame(data, columns=["ID", "Name", "Unit", "Type", "Direction", "Category"]) if data else pd.DataFrame()
+            
+            return df, gr.update(choices=choices)
+        
+        def show_calc_details(selection):
+            if not selection or not metrics_manager:
+                return "", "", "", "", "", "", gr.update(visible=False)
+            
+            indicator_id = selection.split(":")[0].strip()
+            calc = metrics_manager.get_calculator(indicator_id)
+            
+            if not calc:
+                return indicator_id, "Not found", "", "", "", "", gr.update(visible=False)
+            
+            return (
+                calc.get('id', ''),
+                calc.get('name', ''),
+                calc.get('unit', ''),
+                calc.get('calc_type', ''),
+                calc.get('formula', ''),
+                calc.get('definition', ''),
+                gr.update(visible=False)
+            )
+        
+        def view_code(selection):
+            if not selection or not metrics_manager:
+                return gr.update(visible=False)
+            
+            indicator_id = selection.split(":")[0].strip()
+            code = metrics_manager.get_calculator_code(indicator_id)
+            
+            if code:
+                return gr.update(value=code, visible=True)
+            return gr.update(visible=False)
+        
+        def delete_calculator(selection):
+            if not selection or not metrics_manager:
+                return "Please select a calculator"
+            
+            indicator_id = selection.split(":")[0].strip()
+            
+            if metrics_manager.remove_calculator(indicator_id):
+                return f"✅ Deleted: {indicator_id}"
+            return "❌ Delete failed"
+        
+        def import_from_excel(file):
+            if not file or not metrics_manager:
+                return "Please select an Excel file"
+            
             try:
-                if file is None:
-                    return "请选择文件"
-                
-                # 保存上传的文件
-                df = pd.read_excel(file.name)
-                df.to_excel(components['metrics_manager'].metrics_library_path, index=False)
-                
-                # 重新加载
-                components['metrics_manager'].reload_metrics()
-                
-                return "指标库已更新"
-            except Exception as e:
-                return f"更新失败: {str(e)}"
-        
-        def upload_metric_code_from_dropdown(metric_selection: str, code_file) -> str:
-            """上传指标计算代码"""
-            try:
-                if not metric_selection:
-                    return "请选择一个指标"
-                
-                if code_file is None:
-                    return "请选择代码文件"
-                
-                # 从选择中提取指标名称（去掉状态标记）
-                metric_name = metric_selection[2:] if metric_selection.startswith(('✓ ', '✗ ')) else metric_selection
-                
-                # 读取代码文件内容
-                file_path = code_file.name if hasattr(code_file, 'name') else code_file
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    code_content = f.read()
-                
-                # 保存代码
-                success = components['metrics_manager'].save_metric_code(metric_name, code_content)
-                
+                success = metrics_manager.import_metrics(file.name)
                 if success:
-                    return f"指标 '{metric_name}' 的代码已上传"
-                else:
-                    return "上传失败：代码中未找到必要的计算函数"
-                    
+                    return f"✅ Imported indicator definitions"
+                return "❌ Import failed"
             except Exception as e:
-                return f"上传失败: {str(e)}"
+                return f"❌ Import failed: {e}"
         
-        # 绑定事件
-        update_lib_btn.click(
-            fn=update_metrics_library,
-            inputs=[metrics_file],
-            outputs=[update_status]
+        # ===== Bind Events =====
+        upload_btn.click(upload_calculator, [calc_file], [upload_status])
+        refresh_btn.click(refresh_library, outputs=[calc_table, select_calc])
+        select_calc.change(
+            show_calc_details, 
+            [select_calc], 
+            [calc_id, calc_name, calc_unit, calc_type, calc_formula, calc_definition, code_display]
         )
+        view_btn.click(view_code, [select_calc], [code_display])
+        delete_btn.click(delete_calculator, [select_calc], [upload_status])
+        import_btn.click(import_from_excel, [excel_file], [import_status])
         
-        # 导入需要的函数
-        from .metrics_recommendation import refresh_metrics
-        
-        upload_code_btn.click(
-            fn=upload_metric_code_from_dropdown,
-            inputs=[metric_name_dropdown, code_file],
-            outputs=[upload_status]
-        ).then(
-            fn=lambda: get_metrics_code_status(components),
-            outputs=[metrics_code_status]
-        ).then(
-            fn=lambda: update_metric_dropdown(components),
-            outputs=[metric_name_dropdown]
-        )
-        
-        return {
-            'metrics_file': metrics_file,
-            'update_lib_btn': update_lib_btn,
-            'update_status': update_status,
-            'metric_name_dropdown': metric_name_dropdown,
-            'code_file': code_file,
-            'upload_code_btn': upload_code_btn,
-            'upload_status': upload_status,
-            'metrics_code_status': metrics_code_status
-        }
-
-
-def update_metric_dropdown(components):
-    """更新指标下拉列表"""
-    metrics = components['metrics_manager'].get_all_metrics()
-    choices = []
-    for metric in metrics:
-        metric_name = metric['metric name']
-        has_code = components['metrics_manager'].has_metric_code(metric_name)
-        status = "✓" if has_code else "✗"
-        choices.append(f"{status} {metric_name}")
-    return gr.update(choices=choices)
-
-
-def get_metrics_code_status(components):
-    """获取指标代码状态"""
-    metrics = components['metrics_manager'].get_all_metrics()
-    status_data = []
-    for metric in metrics:
-        metric_name = metric['metric name']
-        has_code = components['metrics_manager'].has_metric_code(metric_name)
-        status_data.append({
-            '指标名称': metric_name,
-            '代码状态': '✓ 已上传' if has_code else '✗ 未上传',
-            '类别': metric.get('Primary Category', ''),
-            '数据输入': metric.get('Data Input', '')
-        })
-    return pd.DataFrame(status_data)
+        return {'calc_table': calc_table}

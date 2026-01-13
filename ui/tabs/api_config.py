@@ -1,80 +1,74 @@
 """
-API配置标签页
-用于动态配置Vision API URL
+Tab 0: API Configuration
 """
 
 import gradio as gr
-import logging
 
-logger = logging.getLogger(__name__)
 
-def create_api_config_tab(components, app_state):
-    """创建API配置标签页"""
+def create_api_config_tab(components: dict, app_state, config):
+    """Create API Configuration Tab"""
     
-    vision_client = components['vision_client']
-    
-    def test_and_update_url(url):
-        """测试并更新URL"""
-        if not url or not url.strip():
-            return "❌ 请输入URL", vision_client.base_url
+    with gr.Tab("0. API Config"):
+        gr.Markdown("## ⚙️ API Configuration")
         
-        url = url.strip()
-        old_url = vision_client.base_url
+        with gr.Group():
+            gr.Markdown("### Vision API")
+            gr.Markdown("*Vision model API for semantic segmentation (local or remote)*")
+            
+            with gr.Row():
+                vision_url = gr.Textbox(
+                    label="Vision API URL",
+                    value=config.VISION_API_URL,
+                    placeholder="http://127.0.0.1:8000"
+                )
+                test_btn = gr.Button("Test Connection")
+            
+            api_status = gr.Textbox(label="Status", interactive=False)
         
-        # 尝试更新URL
-        vision_client.base_url = url.rstrip('/')
-        
-        # 测试连接
-        if vision_client.check_health():
-            app_state.vision_api_url = url  # 保存到状态
-            return f"✅ 连接成功！API已更新到: {url}", url
-        else:
-            vision_client.base_url = old_url  # 恢复原URL
-            return f"❌ 无法连接到: {url}\n请检查Colab API是否正在运行", old_url
-    
-    def get_current_status():
-        """获取当前状态"""
-        current_url = vision_client.base_url
-        if vision_client.check_health():
-            return f"✅ API在线: {current_url}"
-        else:
-            return f"❌ API离线: {current_url}"
-    
-    with gr.Tab("⚙️ API配置"):
-        gr.Markdown("""
-        ### 🔧 配置Vision API
-        1. 在Google Colab运行API notebook
-        2. 复制ngrok URL (例如: https://xxxx.ngrok-free.app)
-        3. 粘贴到下方并点击连接
-        """)
-        
-        with gr.Row():
-            url_input = gr.Textbox(
-                label="API URL",
-                placeholder="https://xxxx.ngrok-free.app",
-                value=vision_client.base_url,
-                scale=3
+        with gr.Group():
+            gr.Markdown("### Google API (Gemini)")
+            gr.Markdown("*For indicator recommendation (Stage 1)*")
+            
+            google_key = gr.Textbox(
+                label="Google API Key",
+                value=config.GOOGLE_API_KEY[:20] + "..." if config.GOOGLE_API_KEY else "",
+                type="password",
+                placeholder="AIza..."
             )
-            connect_btn = gr.Button("🔌 连接", variant="primary", scale=1)
+            
+            if config.GOOGLE_API_KEY:
+                gr.Markdown("*✅ API Key loaded from .env file*")
+            else:
+                gr.Markdown("*Configure in .env file or enter manually*")
         
-        status_text = gr.Textbox(
-            label="状态",
-            value=get_current_status(),
-            interactive=False
-        )
+        with gr.Group():
+            gr.Markdown("### OpenAI API (Optional)")
+            gr.Markdown("*For AI-powered report analysis*")
+            
+            openai_key = gr.Textbox(
+                label="OpenAI API Key",
+                value=config.OPENAI_API_KEY[:20] + "..." if config.OPENAI_API_KEY else "",
+                type="password",
+                placeholder="sk-..."
+            )
         
-        # 事件绑定
-        connect_btn.click(
-            fn=test_and_update_url,
-            inputs=url_input,
-            outputs=[status_text, url_input]
-        )
+        def test_vision_api(url):
+            try:
+                vc = components.get('vision_client')
+                if vc:
+                    vc.base_url = url
+                    if vc.check_health():
+                        return f"✅ Connected: {url}"
+                return "❌ Connection failed"
+            except Exception as e:
+                return f"❌ Error: {e}"
         
-        # 添加刷新按钮
-        refresh_btn = gr.Button("🔄 刷新状态", variant="secondary", size="sm")
-        refresh_btn.click(
-            fn=get_current_status,
-            outputs=status_text
-        )
-    
-    return {'url_input': url_input, 'status_text': status_text}
+        def update_vision_url(url):
+            if components.get('vision_client'):
+                components['vision_client'].base_url = url
+            return f"Updated: {url}"
+        
+        test_btn.click(test_vision_api, [vision_url], [api_status])
+        vision_url.change(update_vision_url, [vision_url], [api_status])
+        
+        return {'vision_url': vision_url, 'api_status': api_status}

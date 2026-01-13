@@ -1,9 +1,11 @@
 """
-指标库管理模块
-管理指标定义和计算代码
+Metrics Library Management Module
+Manages metric definitions and calculator code
+Supports both legacy format and Stage 2.5 calculator_layer format
 """
 
 import os
+import re
 import pandas as pd
 import json
 from typing import List, Dict, Optional, Any
@@ -12,20 +14,26 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 class MetricsManager:
-    """指标管理器"""
+    """Metrics Manager - supports both legacy and calculator_layer formats"""
     
     def __init__(self, metrics_library_path: str, metrics_code_dir: str):
         self.metrics_library_path = metrics_library_path
         self.metrics_code_dir = metrics_code_dir
         
-        # 确保代码目录存在
+        # Ensure code directory exists
         os.makedirs(self.metrics_code_dir, exist_ok=True)
         
-        # 加载指标库
+        # Load metrics library
         self.metrics_df = None
         self.metrics_dict = {}
+        
+        # Calculator layer cache
+        self.calculators = {}
+        
         self.load_metrics()
+        self.scan_calculators()
     
     def load_metrics(self) -> pd.DataFrame:
         """加载指标库"""
@@ -310,7 +318,7 @@ from typing import Dict, Any, Union
             return False
     
     def validate_metrics(self) -> Dict[str, List[str]]:
-        """验证指标库的完整性"""
+        """Validate metrics library completeness"""
         issues = {
             'missing_code': [],
             'missing_fields': [],
@@ -322,13 +330,202 @@ from typing import Dict, Any, Union
         for metric in self.get_all_metrics():
             metric_name = metric.get('metric name', '')
             
-            # 检查必要字段
+            # Check required fields
             for field in required_fields:
                 if not metric.get(field):
-                    issues['missing_fields'].append(f"{metric_name}: 缺少 {field}")
+                    issues['missing_fields'].append(f"{metric_name}: missing {field}")
             
-            # 检查代码文件
+            # Check code file
             if metric_name and not self.has_metric_code(metric_name):
                 issues['missing_code'].append(metric_name)
+        
+        return issues
+    
+    # =========================================================================
+    # Stage 2.5 Calculator Layer Support
+    # =========================================================================
+    
+    def scan_calculators(self) -> Dict[str, Dict]:
+        """
+        Scan metrics_code directory for calculator_layer_*.py files
+        Returns dict of {indicator_id: indicator_info}
+        """
+        self.calculators = {}
+        
+        if not os.path.exists(self.metrics_code_dir):
+            return self.calculators
+        
+        for filename in os.listdir(self.metrics_code_dir):
+            if filename.startswith('calculator_layer_') and filename.endswith('.py'):
+                filepath = os.path.join(self.metrics_code_dir, filename)
+                info = self.parse_calculator_file(filepath)
+                if info:
+                    self.calculators[info['id']] = info
+                    self.calculators[info['id']]['filepath'] = filepath
+        
+        logger.info(f"Scanned {len(self.calculators)} calculator_layer files")
+        return self.calculators
+    
+    def parse_calculator_file(self, filepath: str) -> Optional[Dict]:
+        """
+        Parse calculator_layer file to extract INDICATOR definition
+        
+        Expected format: calculator_layer_IND_XXX.py with INDICATOR dict
+        """
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Check for INDICATOR dict
+            if 'INDICATOR' not in content:
+                return None
+            
+            info = {
+                'id': '',
+                'name': '',
+                'unit': '',
+                'formula': '',
+                'target_direction': '',
+                'definition': '',
+                'calc_type': '',
+                'category': '',
+                'target_classes': [],
+                'filename': os.path.basename(filepath)
+            }
+            
+            # Extract fields using regex
+            patterns = {
+                'id': r'"id"\s*:\s*"([^"]+)"',
+                'name': r'"name"\s*:\s*"([^"]+)"',
+                'unit': r'"unit"\s*:\s*"([^"]+)"',
+                'formula': r'"formula"\s*:\s*"([^"]+)"',
+                'target_direction': r'"target_direction"\s*:\s*"([^"]+)"',
+                'definition': r'"definition"\s*:\s*"([^"]+)"',
+                'calc_type': r'"calc_type"\s*:\s*"([^"]+)"',
+                'category': r'"category"\s*:\s*"([^"]+)"',
+            }
+            
+            for key, pattern in patterns.items():
+                match = re.search(pattern, content)
+                if match:
+                    info[key] = match.group(1)
+            
+            # Extract target_classes list
+            classes_match = re.search(r'"target_classes"\s*:\s*\[(.*?)\]', content, re.DOTALL)
+            if classes_match:
+                classes_str = classes_match.group(1)
+                classes = re.findall(r'"([^"]+)"', classes_str)
+                info['target_classes'] = classes
+            
+            return info if info['id'] else None
+            
+        except Exception as e:
+            logger.error(f"Failed to parse calculator file {filepath}: {e}")
+            return None
+    
+    def get_all_calculators(self) -> List[Dict]:
+        """Get all calculator_layer indicators as list"""
+        return list(self.calculators.values())
+    
+    def get_calculator(self, indicator_id: str) -> Optional[Dict]:
+        """Get calculator info by indicator ID"""
+        return self.calculators.get(indicator_id)
+    
+    def get_calculator_filepath(self, indicator_id: str) -> Optional[str]:
+        """Get filepath for calculator by indicator ID"""
+        calc = self.calculators.get(indicator_id)
+        return calc.get('filepath') if calc else None
+    
+    def has_calculator(self, indicator_id: str) -> bool:
+        """Check if calculator exists for indicator ID"""
+        return indicator_id in self.calculators
+    
+    def add_calculator(self, filepath: str) -> Optional[str]:
+        """
+        Add a calculator file to the library
+        Returns indicator_id if successful, None otherwise
+        """
+        try:
+            filename = os.path.basename(filepath)
+            
+            # Validate filename format
+            if not filename.startswith('calculator_layer_') or not filename.endswith('.py'):
+                logger.error(f"Invalid filename format: {filename}")
+                return None
+            
+            # Parse to validate content
+            info = self.parse_calculator_file(filepath)
+            if not info:
+                logger.error(f"Failed to parse calculator file: {filepath}")
+                return None
+            
+            # Copy to metrics_code directory
+            dest_path = os.path.join(self.metrics_code_dir, filename)
+            shutil.copy2(filepath, dest_path)
+            
+            # Update cache
+            info['filepath'] = dest_path
+            self.calculators[info['id']] = info
+            
+            logger.info(f"Added calculator: {info['id']} - {info['name']}")
+            return info['id']
+            
+        except Exception as e:
+            logger.error(f"Failed to add calculator: {e}")
+            return None
+    
+    def remove_calculator(self, indicator_id: str) -> bool:
+        """Remove a calculator by indicator ID"""
+        try:
+            calc = self.calculators.get(indicator_id)
+            if not calc:
+                return False
+            
+            filepath = calc.get('filepath')
+            if filepath and os.path.exists(filepath):
+                os.remove(filepath)
+            
+            del self.calculators[indicator_id]
+            logger.info(f"Removed calculator: {indicator_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to remove calculator: {e}")
+            return False
+    
+    def get_calculator_code(self, indicator_id: str) -> Optional[str]:
+        """Get source code for a calculator"""
+        filepath = self.get_calculator_filepath(indicator_id)
+        if filepath and os.path.exists(filepath):
+            with open(filepath, 'r', encoding='utf-8') as f:
+                return f.read()
+        return None
+    
+    def get_combined_metrics(self) -> List[Dict]:
+        """
+        Get combined list of metrics from both legacy format and calculator_layer format
+        Returns unified list with 'source' field indicating origin
+        """
+        combined = []
+        
+        # Add legacy metrics
+        for metric in self.get_all_metrics():
+            metric['source'] = 'legacy'
+            combined.append(metric)
+        
+        # Add calculator_layer metrics
+        for calc in self.get_all_calculators():
+            combined.append({
+                'metric name': calc.get('name', ''),
+                'indicator_code': calc.get('id', ''),
+                'Primary Category': calc.get('category', ''),
+                'Unit': calc.get('unit', ''),
+                'Calculation Method': calc.get('formula', ''),
+                'target_direction': calc.get('target_direction', ''),
+                'source': 'calculator_layer',
+                'filepath': calc.get('filepath', '')
+            })
+        
+        return combined
         
         return issues

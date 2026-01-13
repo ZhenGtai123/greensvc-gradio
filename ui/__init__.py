@@ -1,8 +1,6 @@
-"""
-UI模块初始化文件
-"""
+"""UI Module"""
 
 from .base import create_main_interface
-from .state import AppState
+from .state import AppState, ProjectQuery
 
-__all__ = ['create_main_interface', 'AppState']
+__all__ = ['create_main_interface', 'AppState', 'ProjectQuery']

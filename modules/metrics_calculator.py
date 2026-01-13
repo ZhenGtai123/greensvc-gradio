@@ -1,6 +1,6 @@
 """
-改进的指标计算模块
-支持配置每个指标所需的输入图像
+Improved Metrics Calculation Module
+Supports both legacy format and Stage 2.5 calculator_layer format
 """
 
 import os
@@ -14,11 +14,18 @@ import tempfile
 import io
 from PIL import Image
 import logging
+import json
 
 logger = logging.getLogger(__name__)
 
+
 class MetricsCalculator:
-    """指标计算器"""
+    """
+    Metrics Calculator
+    Supports:
+    - Legacy format: calculate(vision_result) functions
+    - Stage 2.5 format: calculate_indicator(image_path) functions with INDICATOR dict
+    """
     
     def __init__(self, metrics_code_dir: str, metrics_manager=None):
         self.metrics_code_dir = metrics_code_dir
@@ -26,11 +33,149 @@ class MetricsCalculator:
         self.loaded_modules = {}
         self.temp_dir = tempfile.mkdtemp(prefix='metrics_calc_')
         
-        # 确保代码目录存在
+        # Semantic colors for calculator_layer format
+        self.semantic_colors = {}
+        
+        # Ensure code directory exists
         os.makedirs(self.metrics_code_dir, exist_ok=True)
         
-        # 初始化默认指标计算函数
+        # Initialize default calculators
         self._init_default_calculators()
+    
+    def load_semantic_colors(self, config_path: str) -> bool:
+        """
+        Load semantic color configuration for calculator_layer format
+        
+        Args:
+            config_path: Path to Semantic_configuration.json
+        """
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            
+            self.semantic_colors = {}
+            for item in config:
+                name = item.get('name', '')
+                hex_color = item.get('color', '')
+                if name and hex_color:
+                    h = hex_color.lstrip('#')
+                    rgb = tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+                    self.semantic_colors[name] = rgb
+            
+            logger.info(f"Loaded {len(self.semantic_colors)} semantic classes")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to load semantic colors: {e}")
+            return False
+    
+    def load_calculator_module(self, indicator_id: str) -> Optional[Any]:
+        """
+        Load a calculator_layer module by indicator ID
+        
+        Returns the module with semantic_colors injected
+        """
+        try:
+            # Check cache first
+            cache_key = f"calc_{indicator_id}"
+            if cache_key in self.loaded_modules:
+                return self.loaded_modules[cache_key]
+            
+            # Find calculator file
+            calc_path = os.path.join(self.metrics_code_dir, f"calculator_layer_{indicator_id}.py")
+            
+            if not os.path.exists(calc_path):
+                logger.error(f"Calculator not found: {calc_path}")
+                return None
+            
+            # Load module
+            spec = importlib.util.spec_from_file_location(f"calculator_{indicator_id}", calc_path)
+            module = importlib.util.module_from_spec(spec)
+            
+            # Inject semantic_colors before execution
+            module.semantic_colors = self.semantic_colors
+            
+            # Execute module
+            spec.loader.exec_module(module)
+            
+            # Validate module has required components
+            if not hasattr(module, 'INDICATOR'):
+                logger.error(f"Calculator missing INDICATOR dict: {indicator_id}")
+                return None
+            
+            if not hasattr(module, 'calculate_indicator'):
+                logger.error(f"Calculator missing calculate_indicator function: {indicator_id}")
+                return None
+            
+            # Cache and return
+            self.loaded_modules[cache_key] = module
+            return module
+            
+        except Exception as e:
+            logger.error(f"Failed to load calculator module {indicator_id}: {e}")
+            return None
+    
+    def calculate_from_calculator_layer(self, indicator_id: str, image_path: str) -> Dict:
+        """
+        Calculate indicator using calculator_layer format
+        
+        Args:
+            indicator_id: Indicator ID (e.g., "IND_ASV")
+            image_path: Path to semantic segmentation mask image
+            
+        Returns:
+            Result dict with 'success', 'value', and other fields
+        """
+        try:
+            module = self.load_calculator_module(indicator_id)
+            if not module:
+                return {'success': False, 'error': f'Failed to load calculator: {indicator_id}'}
+            
+            # Call calculate_indicator function
+            result = module.calculate_indicator(image_path)
+            
+            # Add indicator info to result
+            result['indicator_id'] = indicator_id
+            result['indicator_name'] = module.INDICATOR.get('name', '')
+            result['unit'] = module.INDICATOR.get('unit', '')
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Calculator error {indicator_id}: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def calculate_batch(self, indicator_ids: List[str], image_paths: List[str]) -> pd.DataFrame:
+        """
+        Calculate multiple indicators for multiple images
+        
+        Returns DataFrame with results
+        """
+        results = []
+        
+        for image_path in image_paths:
+            for indicator_id in indicator_ids:
+                result = self.calculate_from_calculator_layer(indicator_id, image_path)
+                
+                results.append({
+                    'Image': os.path.basename(image_path),
+                    'Indicator': indicator_id,
+                    'Name': result.get('indicator_name', ''),
+                    'Value': result.get('value'),
+                    'Unit': result.get('unit', ''),
+                    'Success': result.get('success', False),
+                    'Error': result.get('error', ''),
+                    'Target Pixels': result.get('target_pixels', ''),
+                    'Total Pixels': result.get('total_pixels', '')
+                })
+        
+        return pd.DataFrame(results)
+    
+    def get_calculator_info(self, indicator_id: str) -> Optional[Dict]:
+        """Get INDICATOR dict from a calculator module"""
+        module = self.load_calculator_module(indicator_id)
+        if module and hasattr(module, 'INDICATOR'):
+            return module.INDICATOR.copy()
+        return None
     
     def _init_default_calculators(self):
         """初始化内置的指标计算函数"""

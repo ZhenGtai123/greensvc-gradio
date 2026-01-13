@@ -99,11 +99,12 @@ def get_id_from_label(options: List[str], ids: List[str], label: str) -> str:
 def create_project_questionnaire_tab(components: dict, app_state, config):
     """Create Project Questionnaire Tab"""
     
-    # Internal state for images
-    images_state = gr.State({})  # {image_id: {filename, filepath, zone_id, has_gps, lat, lon}}
-    zones_state = gr.State({})   # {zone_id: {name, type}}
-    
+
     with gr.Tab("1. Project Questionnaire"):
+        # Internal state for images
+        images_state = gr.State({})  # {image_id: {filename, filepath, zone_id, has_gps, lat, lon}}
+        zones_state = gr.State({})   # {zone_id: {name, type}}
+    
         gr.Markdown("## 📋 Design Goal Definition")
         
         with gr.Row():

@@ -1,22 +1,11 @@
 """
-Tab 5: Metrics Calculation (Stage 2.5)
-Exact implementation of GreenSVC Stage 2.5 methodology
+Tab 5: Metrics Calculation
+Calculate indicators from semantic segmentation masks
 
-From Stage 2.5 layers:
-- input_layer.py: Load query, semantic config, scan mask folders
-- calculator_layer: INDICATOR dict + calculate_indicator(image_path)
-- processing_layer: process_zone(), calculate_statistics()
-- output_layer: Build JSON output structure
-
-Folder structure:
-    mask/
-    ├── zone_1/
-    │   ├── full/
-    │   ├── foreground/
-    │   ├── middleground/
-    │   └── background/
-    └── zone_2/
-        └── ...
+Supports:
+- Folder structure: mask/zone_id/layer/image.png
+- Layers: full, foreground, middleground, background
+- Individual image upload
 """
 
 import gradio as gr
@@ -246,9 +235,9 @@ def create_metrics_calculation_tab(components: dict, app_state, config):
     
     with gr.Tab("5. Metrics Calculation"):
         gr.Markdown("""
-        ## 📊 Stage 2.5: Single Indicator Computation
+        ## 📊 Indicator Calculation
         
-        Process mask images through calculator_layer to compute indicator values.
+        Calculate indicators from semantic segmentation masks.
         
         **Layers**: full, foreground, middleground, background
         """)
@@ -283,18 +272,18 @@ def create_metrics_calculation_tab(components: dict, app_state, config):
             gr.Markdown("### 🖼️ Mask Images")
             
             gr.Markdown("""
-            **Option A**: Use Stage 2.5 folder structure:
+            **Option A**: Use folder structure:
             ```
             mask_folder/zone_id/layer/image.png
             ```
             
-            **Option B**: Upload individual mask images (will be treated as 'full' layer)
+            **Option B**: Upload individual mask images (treated as 'full' layer)
             """)
             
             input_mode = gr.Radio(
                 label="Input Mode",
-                choices=["Folder Structure (Stage 2.5)", "Upload Images (Simple)"],
-                value="Upload Images (Simple)"
+                choices=["Folder Structure", "Upload Images"],
+                value="Upload Images"
             )
             
             mask_folder_input = gr.Textbox(
@@ -313,7 +302,7 @@ def create_metrics_calculation_tab(components: dict, app_state, config):
             img_status = gr.Textbox(label="Image Status", interactive=False)
         
         # ===== Calculate =====
-        calculate_btn = gr.Button("🚀 Run Stage 2.5 Calculation", variant="primary", size="lg")
+        calculate_btn = gr.Button("🚀 Calculate", variant="primary", size="lg")
         progress_text = gr.Textbox(label="Progress", interactive=False)
         
         # ===== Results =====
@@ -348,7 +337,7 @@ def create_metrics_calculation_tab(components: dict, app_state, config):
         
         # ===== Export =====
         with gr.Group(visible=False) as export_group:
-            gr.Markdown("### 💾 Export (Stage 2.5 Format)")
+            gr.Markdown("### 💾 Export")
             
             export_btn = gr.Button("📥 Export JSON")
             export_file = gr.File(label="Download", visible=False)
@@ -376,7 +365,7 @@ def create_metrics_calculation_tab(components: dict, app_state, config):
             return "❌ Failed to load"
         
         def toggle_input_mode(mode):
-            is_folder = mode == "Folder Structure (Stage 2.5)"
+            is_folder = mode == "Folder Structure"
             return gr.update(visible=is_folder), gr.update(visible=is_folder)
         
         def refresh_calcs():
@@ -447,8 +436,8 @@ def create_metrics_calculation_tab(components: dict, app_state, config):
                 all_values_by_layer = {layer: [] for layer in LAYERS}
                 all_raw_results = []
                 
-                if mode == "Folder Structure (Stage 2.5)" and folder_path:
-                    # Stage 2.5 folder structure
+                if mode == "Folder Structure" and folder_path:
+                    # Folder structure
                     for zone in query_zones:
                         zone_images = scan_zone_images(folder_path, zone['id'], LAYERS)
                         total_zone_images = sum(len(f) for f in zone_images.values())

@@ -1,12 +1,12 @@
 """
-Tab 6: Report Generation (Stage 3)
-Based on GreenSVC_Stage3_Colab.ipynb - LLM Diagnosis + IOM Matching
+Tab 6: Report Generation
+Generate diagnosis and recommendations from indicator results
 
-Stage 3 Pipeline:
-1. Load indicator results (from Stage 2.5)
-2. LLM Diagnosis: Analyze zones and identify issues
-3. IOM Matching: Match issues to Intervention-Operation-Measure recommendations
-4. Generate design strategy report
+Pipeline:
+1. Load indicator results
+2. LLM Diagnosis (analyze zones, identify issues)
+3. IOM Matching (recommend interventions)
+4. Export report
 """
 
 import gradio as gr
@@ -312,11 +312,11 @@ def create_report_generation_tab(components: dict, app_state, config):
     
     with gr.Tab("6. Report Generation"):
         gr.Markdown("""
-        ## 📄 Stage 3: Diagnosis & Recommendations
+        ## 📄 Diagnosis & Recommendations
         
-        Generate design recommendations based on indicator analysis results.
+        Generate design recommendations based on indicator analysis.
         
-        **Pipeline**: Load Results → LLM Diagnosis → IOM Matching → Report
+        **Pipeline**: Load Results → Diagnosis → IOM Matching → Report
         """)
         
         # ===== Data Source =====
@@ -324,7 +324,7 @@ def create_report_generation_tab(components: dict, app_state, config):
             gr.Markdown("### 📥 Load Indicator Results")
             
             with gr.Row():
-                result_file = gr.File(label="Stage 2.5 Output (.json)", file_types=[".json"])
+                result_file = gr.File(label="Indicator Results (.json)", file_types=[".json"])
                 load_btn = gr.Button("Load Results")
             
             # Or use from current session

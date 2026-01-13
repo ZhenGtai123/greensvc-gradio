@@ -28,7 +28,7 @@ def create_metrics_management_tab(components: dict, app_state, config):
         with gr.Group():
             gr.Markdown("### 📤 Upload Calculator")
             gr.Markdown("""
-            Upload calculator files in Stage 2.5 format:
+            Upload calculator files:
             - Filename: `calculator_layer_IND_XXX.py`
             - Must contain: `INDICATOR` dict and `calculate_indicator(image_path)` function
             """)

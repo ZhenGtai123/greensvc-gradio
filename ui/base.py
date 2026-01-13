@@ -100,9 +100,6 @@ def create_main_interface(components: dict, config, app_state: AppState = None):
         5. Metrics Calculation
         6. Report Generation
     """
-    print("=" * 50)
-    print("create_main_interface 被调用")
-    print("=" * 50)
     if app_state is None:
         app_state = AppState()
     
@@ -119,17 +116,17 @@ def create_main_interface(components: dict, config, app_state: AppState = None):
         """)
         
         with gr.Tabs():
-            print("创建 Tab 0"); create_api_config_tab(components, app_state, config)
-            print("创建 Tab 1"); create_project_questionnaire_tab(components, app_state, config)
-            print("创建 Tab 2"); create_indicator_recommendation_tab(components, app_state, config)
-            print("创建 Tab 3"); create_metrics_management_tab(components, app_state, config)
-            print("创建 Tab 4"); create_vision_analysis_tab(components, app_state, config)
-            print("创建 Tab 5"); create_metrics_calculation_tab(components, app_state, config)
-            print("创建 Tab 6"); create_report_generation_tab(components, app_state, config)
+            create_api_config_tab(components, app_state, config)
+            create_project_questionnaire_tab(components, app_state, config)
+            create_indicator_recommendation_tab(components, app_state, config)
+            create_metrics_management_tab(components, app_state, config)
+            create_vision_analysis_tab(components, app_state, config)
+            create_metrics_calculation_tab(components, app_state, config)
+            create_report_generation_tab(components, app_state, config)
         
         gr.Markdown("""
         ---
-        <center><small>GreenSVC-AI | © 2026</small></center>
+        <center><small>GreenSVC-AI v2.0 | © 2024</small></center>
         """)
     
     return app

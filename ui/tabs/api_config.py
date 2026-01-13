@@ -27,7 +27,7 @@ def create_api_config_tab(components: dict, app_state, config):
         
         with gr.Group():
             gr.Markdown("### Google API (Gemini)")
-            gr.Markdown("*For indicator recommendation (Stage 1)*")
+            gr.Markdown("*For AI-powered indicator recommendation*")
             
             google_key = gr.Textbox(
                 label="Google API Key",

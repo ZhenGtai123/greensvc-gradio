@@ -35,7 +35,7 @@ class Config:
     # 路径配置
     BASE_DIR: Path = Path(__file__).parent
     DATA_DIR: Path = BASE_DIR / 'data'
-    METRICS_LIBRARY_PATH: Path = DATA_DIR / 'library_metrics.xlsx'
+    METRICS_LIBRARY_PATH: Path = DATA_DIR / 'A_indicators.xlsx'
     METRICS_CODE_DIR: Path = DATA_DIR / 'metrics_code'
     KNOWLEDGE_BASE_DIR: Path = DATA_DIR / 'knowledge_base'
     OUTPUT_DIR: Path = BASE_DIR / 'outputs'

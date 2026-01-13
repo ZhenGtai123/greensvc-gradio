@@ -1,7 +1,22 @@
 """
-Tab 5: Metrics Calculation
-Uses MetricsCalculator and MetricsManager from modules
-Based on GreenSVC Stage 2.5 methodology
+Tab 5: Metrics Calculation (Stage 2.5)
+Exact implementation of GreenSVC Stage 2.5 methodology
+
+From Stage 2.5 layers:
+- input_layer.py: Load query, semantic config, scan mask folders
+- calculator_layer: INDICATOR dict + calculate_indicator(image_path)
+- processing_layer: process_zone(), calculate_statistics()
+- output_layer: Build JSON output structure
+
+Folder structure:
+    mask/
+    ├── zone_1/
+    │   ├── full/
+    │   ├── foreground/
+    │   ├── middleground/
+    │   └── background/
+    └── zone_2/
+        └── ...
 """
 
 import gradio as gr
@@ -9,16 +24,22 @@ import pandas as pd
 import numpy as np
 import os
 import json
+import glob
 import logging
-from typing import Dict, List
+from typing import Dict, List, Any, Tuple
 from pathlib import Path
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+# Stage 2.5 Configuration
+LAYERS = ["full", "foreground", "middleground", "background"]
+
 
 def calculate_statistics(values: List[float]) -> Dict:
-    """Calculate descriptive statistics"""
+    """
+    Calculate descriptive statistics (from processing_layer.py)
+    """
     if not values:
         return {'N': 0}
     
@@ -36,291 +57,547 @@ def calculate_statistics(values: List[float]) -> Dict:
         'Median': round(float(np.median(arr)), 3),
         'Q3': round(float(q3), 3),
         'Max': round(float(np.max(arr)), 3),
+        'Range': round(float(np.max(arr) - np.min(arr)), 3),
+        'IQR': round(float(q3 - q1), 3),
+        'Variance': round(float(np.var(arr)), 3),
         'CV(%)': round(float(std_val / mean_val * 100), 2) if mean_val != 0 else 0
     }
 
 
-def create_metrics_calculation_tab(components: dict, app_state, config):
-    """Create Metrics Calculation Tab"""
+def scan_zone_images(base_path: str, zone_id: str, layers: List[str]) -> Dict[str, List[str]]:
+    """
+    Scan mask folder for images (from input_layer.py)
     
-    # Get components
+    Returns: {layer: [filepath1, filepath2, ...]}
+    """
+    zone_images = {}
+    
+    for layer in layers:
+        layer_path = os.path.join(base_path, zone_id, layer)
+        
+        if os.path.exists(layer_path):
+            png_files = glob.glob(os.path.join(layer_path, "*.png"))
+            jpg_files = glob.glob(os.path.join(layer_path, "*.jpg"))
+            jpeg_files = glob.glob(os.path.join(layer_path, "*.jpeg"))
+            
+            all_files = sorted(png_files + jpg_files + jpeg_files)
+            zone_images[layer] = all_files
+        else:
+            zone_images[layer] = []
+    
+    return zone_images
+
+
+def process_zone(zone: Dict, zone_images: Dict[str, List[str]], 
+                 calculator_func, indicator_info: Dict) -> Dict:
+    """
+    Process all images in a zone (from processing_layer.py)
+    """
+    zone_id = zone.get('id', zone.get('zone_id', ''))
+    
+    results = {
+        'zone_id': zone_id,
+        'zone_name': zone.get('name', zone.get('zone_name', '')),
+        'area_sqm': zone.get('area_sqm', 0),
+        'status': zone.get('status', 'unknown'),
+        'layers': {},
+        'all_values': [],
+        'values_by_layer': {},
+        'images_processed': 0,
+        'images_failed': 0,
+        'images_no_data': 0
+    }
+    
+    for layer, image_paths in zone_images.items():
+        layer_results = {
+            'images': [],
+            'values': [],
+            'statistics': {}
+        }
+        
+        for image_path in image_paths:
+            result = calculator_func(image_path)
+            
+            if result.get('success', False):
+                image_data = {
+                    'filename': os.path.basename(image_path),
+                    'value': result.get('value')
+                }
+                
+                # Add extra fields
+                for key, val in result.items():
+                    if key not in ['success', 'value', 'error']:
+                        image_data[key] = val
+                
+                layer_results['images'].append(image_data)
+                
+                if result.get('value') is not None:
+                    layer_results['values'].append(result['value'])
+                    results['all_values'].append(result['value'])
+                else:
+                    results['images_no_data'] += 1
+                
+                results['images_processed'] += 1
+            else:
+                results['images_failed'] += 1
+        
+        # Layer statistics
+        if layer_results['values']:
+            layer_results['statistics'] = calculate_statistics(layer_results['values'])
+        
+        results['layers'][layer] = layer_results
+        results['values_by_layer'][layer] = layer_results['values']
+    
+    return results
+
+
+def build_output_json(indicator: Dict, all_zone_results: List[Dict], 
+                      all_values: List[float], all_values_by_layer: Dict,
+                      query_data: Dict = None, semantic_config_path: str = None) -> Dict:
+    """
+    Build Stage 2.5 output JSON structure (from output_layer.py)
+    """
+    # Overall statistics
+    descriptive_stats = calculate_statistics(all_values)
+    
+    # Layer statistics
+    layer_overall_stats = {}
+    for layer in LAYERS:
+        if all_values_by_layer.get(layer):
+            layer_overall_stats[layer] = calculate_statistics(all_values_by_layer[layer])
+        else:
+            layer_overall_stats[layer] = {'N': 0, 'Mean': None, 'note': 'No images found'}
+    
+    # Zone statistics table
+    zone_statistics = []
+    for zr in all_zone_results:
+        if zr['all_values']:
+            zone_stat = {
+                'Zone': zr['zone_name'],
+                'Area_ID': zr['zone_id'],
+                'Area_sqm': zr['area_sqm'],
+                'Status': zr['status'],
+                'Indicator': indicator['id'],
+                'N_total': len(zr['all_values']),
+                'Mean_overall': round(float(np.mean(zr['all_values'])), 3),
+                'Std_overall': round(float(np.std(zr['all_values'])), 3),
+                'Min_overall': round(float(min(zr['all_values'])), 3),
+                'Max_overall': round(float(max(zr['all_values'])), 3)
+            }
+            
+            # Layer statistics
+            for layer in LAYERS:
+                layer_stats = zr['layers'].get(layer, {}).get('statistics', {})
+                zone_stat[f'{layer}_N'] = layer_stats.get('N', 0)
+                zone_stat[f'{layer}_Mean'] = layer_stats.get('Mean', None)
+                zone_stat[f'{layer}_Std'] = layer_stats.get('Std', None)
+            
+            zone_statistics.append(zone_stat)
+    
+    # Build output
+    output = {
+        'computation_metadata': {
+            'version': '2.5',
+            'generated_at': datetime.now().isoformat(),
+            'system': 'GreenSVC-AI Stage 2.5',
+            'indicator_id': indicator['id'],
+            'semantic_config': os.path.basename(semantic_config_path) if semantic_config_path else None,
+            'color_matching': 'exact',
+            'note': 'Images processed from mask folders, all layers'
+        },
+        'indicator_definition': {
+            'id': indicator['id'],
+            'name': indicator.get('name', ''),
+            'definition': indicator.get('definition', ''),
+            'unit': indicator.get('unit', ''),
+            'formula': indicator.get('formula', ''),
+            'target_direction': indicator.get('target_direction', ''),
+            'category': indicator.get('category', ''),
+            'calc_type': indicator.get('calc_type', 'ratio'),
+            'semantic_classes': indicator.get('target_classes', [])
+        },
+        'computation_summary': {
+            'total_zones': len(all_zone_results),
+            'total_images_analyzed': sum(r['images_processed'] for r in all_zone_results),
+            'images_failed': sum(r['images_failed'] for r in all_zone_results),
+            'images_no_data': sum(r.get('images_no_data', 0) for r in all_zone_results),
+            'layers_processed': LAYERS,
+            'images_per_layer': {layer: len(all_values_by_layer.get(layer, [])) for layer in LAYERS}
+        },
+        'descriptive_statistics_overall': {
+            'Indicator': indicator['id'],
+            'Name': indicator.get('name', ''),
+            'Unit': indicator.get('unit', ''),
+            **descriptive_stats
+        },
+        'descriptive_statistics_by_layer': layer_overall_stats,
+        'zone_statistics': zone_statistics,
+        'layer_results': {zr['zone_id']: zr['layers'] for zr in all_zone_results}
+    }
+    
+    return output
+
+
+def create_metrics_calculation_tab(components: dict, app_state, config):
+    """Create Metrics Calculation Tab (Stage 2.5)"""
+    
     metrics_calculator = components.get('metrics_calculator')
     metrics_manager = components.get('metrics_manager')
     
     with gr.Tab("5. Metrics Calculation"):
         gr.Markdown("""
-        ## 📊 Indicator Calculation
-        Calculate indicators from semantic segmentation masks using Stage 2.5 methodology
+        ## 📊 Stage 2.5: Single Indicator Computation
+        
+        Process mask images through calculator_layer to compute indicator values.
+        
+        **Layers**: full, foreground, middleground, background
         """)
         
         # ===== Configuration =====
         with gr.Group():
-            gr.Markdown("### ⚙️ Semantic Configuration")
+            gr.Markdown("### ⚙️ Configuration")
             
             with gr.Row():
-                semantic_file = gr.File(
-                    label="Semantic Configuration (.json)",
-                    file_types=[".json"]
-                )
-                load_semantic_btn = gr.Button("Load Config")
+                semantic_file = gr.File(label="Semantic Config (.json or .xlsx)", file_types=[".json", ".xlsx"])
+                load_config_btn = gr.Button("Load Config")
             
-            semantic_status = gr.Textbox(label="Status", interactive=False)
-            
-            # Auto-load default config
-            default_config = Path(config.DATA_DIR) / 'Semantic_configuration.json'
-            if default_config.exists():
-                gr.Markdown(f"*Default config available: {default_config.name}*")
+            config_status = gr.Textbox(label="Semantic Status", interactive=False,
+                                       value="Click 'Load Config' to load default or upload custom")
         
         # ===== Calculator Selection =====
         with gr.Group():
-            gr.Markdown("### 📐 Select Calculators")
+            gr.Markdown("### 📐 Select Calculator")
             
-            refresh_calcs_btn = gr.Button("🔄 Refresh List")
+            refresh_btn = gr.Button("🔄 Refresh Calculators")
             
-            available_calcs = gr.CheckboxGroup(
-                label="Available Calculators (from Metrics Library)",
-                choices=[]
+            calculator_dropdown = gr.Dropdown(
+                label="Select Indicator Calculator",
+                choices=[],
+                info="Select one calculator_layer_IND_*.py"
             )
             
-            calc_info = gr.Textbox(label="Calculator Info", lines=3, interactive=False)
+            calc_details = gr.JSON(label="Calculator Info", visible=False)
         
         # ===== Image Source =====
         with gr.Group():
-            gr.Markdown("### 🖼️ Image Source")
+            gr.Markdown("### 🖼️ Mask Images")
             
-            image_source = gr.Radio(
-                label="Select Image Source",
-                choices=[
-                    "From Vision Analysis Results",
-                    "Upload Mask Images"
-                ],
-                value="From Vision Analysis Results"
+            gr.Markdown("""
+            **Option A**: Use Stage 2.5 folder structure:
+            ```
+            mask_folder/zone_id/layer/image.png
+            ```
+            
+            **Option B**: Upload individual mask images (will be treated as 'full' layer)
+            """)
+            
+            input_mode = gr.Radio(
+                label="Input Mode",
+                choices=["Folder Structure (Stage 2.5)", "Upload Images (Simple)"],
+                value="Upload Images (Simple)"
             )
             
-            with gr.Row(visible=False) as upload_row:
-                mask_upload = gr.File(
-                    label="Upload Mask Images",
-                    file_count="multiple",
-                    file_types=["image"]
-                )
+            mask_folder_input = gr.Textbox(
+                label="Mask Folder Path",
+                placeholder="/path/to/mask/",
+                visible=False
+            )
             
-            image_info = gr.Textbox(label="Images", interactive=False)
-            refresh_images_btn = gr.Button("Refresh Images")
+            mask_upload = gr.File(
+                label="Upload Mask Images",
+                file_count="multiple",
+                file_types=["image"]
+            )
+            
+            scan_btn = gr.Button("📂 Scan Folder", visible=False)
+            img_status = gr.Textbox(label="Image Status", interactive=False)
         
-        # ===== Calculation =====
-        calculate_btn = gr.Button("🚀 Calculate Indicators", variant="primary", size="lg")
-        calc_status = gr.Textbox(label="Calculation Status", interactive=False)
+        # ===== Calculate =====
+        calculate_btn = gr.Button("🚀 Run Stage 2.5 Calculation", variant="primary", size="lg")
+        progress_text = gr.Textbox(label="Progress", interactive=False)
         
         # ===== Results =====
         with gr.Group(visible=False) as results_group:
             gr.Markdown("### 📈 Results")
             
             with gr.Row():
-                total_images = gr.Textbox(label="Images Processed", interactive=False)
-                total_indicators = gr.Textbox(label="Indicators", interactive=False)
+                result_indicator = gr.Textbox(label="Indicator", interactive=False)
+                result_total = gr.Textbox(label="Total Images", interactive=False)
+                result_mean = gr.Textbox(label="Overall Mean", interactive=False)
             
-            results_df = gr.Dataframe(
-                label="Calculation Results",
+            # Zone statistics table
+            zone_stats_table = gr.Dataframe(
+                label="Zone Statistics",
                 interactive=False,
                 wrap=True
             )
             
-            with gr.Accordion("Statistics Summary", open=False):
-                stats_df = gr.Dataframe(
-                    label="Descriptive Statistics",
+            # Layer breakdown
+            with gr.Accordion("Statistics by Layer", open=True):
+                layer_stats_table = gr.Dataframe(
+                    label="Layer Statistics",
                     interactive=False
                 )
             
-            with gr.Accordion("Export Results", open=False):
-                export_btn = gr.Button("Export to JSON")
-                export_file = gr.File(label="Download", visible=False)
+            # Raw results
+            with gr.Accordion("Detailed Results", open=False):
+                raw_results_table = gr.Dataframe(
+                    label="All Image Results",
+                    interactive=False
+                )
         
-        # ========== Event Handlers ==========
-        
-        def load_semantic_config(file):
-            if not file:
-                # Try default config
-                default_path = Path(config.DATA_DIR) / 'Semantic_configuration.json'
-                if default_path.exists():
-                    if metrics_calculator:
-                        if metrics_calculator.load_semantic_colors(str(default_path)):
-                            return f"✅ Loaded default config ({len(metrics_calculator.semantic_colors)} classes)"
-                return "Please select a file or use default config"
+        # ===== Export =====
+        with gr.Group(visible=False) as export_group:
+            gr.Markdown("### 💾 Export (Stage 2.5 Format)")
             
-            if metrics_calculator:
-                if metrics_calculator.load_semantic_colors(file.name):
-                    return f"✅ Loaded {len(metrics_calculator.semantic_colors)} semantic classes"
-            return "❌ Failed to load configuration"
+            export_btn = gr.Button("📥 Export JSON")
+            export_file = gr.File(label="Download", visible=False)
         
-        def toggle_upload(source):
-            return gr.update(visible=source == "Upload Mask Images")
+        # State
+        output_json_state = gr.State({})
         
-        def refresh_calculators():
-            """Get available calculators from MetricsManager"""
-            choices = []
-            
-            if metrics_manager:
-                metrics_manager.scan_calculators()
-                for calc in metrics_manager.get_all_calculators():
-                    choices.append(f"{calc.get('id', '')}: {calc.get('name', '')}")
-            
-            # Also check selected metrics from recommendation
-            selected = app_state.get_selected_metrics()
-            if selected:
-                for m in selected:
-                    code = m.get('indicator_code', '')
-                    if code and code not in [c.split(":")[0] for c in choices]:
-                        choices.append(f"{code}: (from recommendation)")
-            
-            info = f"Found {len(choices)} calculators"
-            return gr.update(choices=choices), info
+        # ========== EVENT HANDLERS ==========
         
-        def refresh_images(source, uploaded):
-            if source == "From Vision Analysis Results":
-                vision_results = app_state.get_vision_results()
-                if vision_results:
-                    return f"✅ {len(vision_results)} images from vision analysis"
-                return "No vision analysis results. Run Vision Analysis first."
+        def load_semantic(file):
+            if not metrics_calculator:
+                return "❌ MetricsCalculator not initialized"
+            
+            # Use uploaded or default
+            if file:
+                path = file.name
             else:
-                if uploaded:
-                    return f"✅ {len(uploaded)} uploaded images"
-                return "No images uploaded"
+                path = str(Path(config.DATA_DIR) / 'Semantic_configuration.json')
+            
+            if not os.path.exists(path):
+                return f"❌ File not found: {path}"
+            
+            if metrics_calculator.load_semantic_colors(path):
+                return f"✅ Loaded {len(metrics_calculator.semantic_colors)} classes from {os.path.basename(path)}"
+            return "❌ Failed to load"
         
-        def run_calculation(selected_calcs, source, uploaded_files):
+        def toggle_input_mode(mode):
+            is_folder = mode == "Folder Structure (Stage 2.5)"
+            return gr.update(visible=is_folder), gr.update(visible=is_folder)
+        
+        def refresh_calcs():
+            if not metrics_manager:
+                return gr.update(choices=[])
+            
+            metrics_manager.scan_calculators()
+            choices = []
+            for calc in metrics_manager.get_all_calculators():
+                choices.append(f"{calc['id']}: {calc['name']}")
+            
+            return gr.update(choices=choices)
+        
+        def show_calc_info(selection):
+            if not selection or not metrics_calculator:
+                return gr.update(visible=False)
+            
+            ind_id = selection.split(":")[0].strip()
+            info = metrics_calculator.get_calculator_info(ind_id)
+            
+            if info:
+                return gr.update(value=info, visible=True)
+            return gr.update(visible=False)
+        
+        def run_calculation(calc_sel, mode, folder_path, uploaded_files):
+            """Run Stage 2.5 calculation"""
             try:
-                if not selected_calcs:
-                    return ("❌ Please select at least one calculator", "", "", 
-                            pd.DataFrame(), pd.DataFrame(), 
-                            gr.update(visible=False), gr.update(visible=False))
+                if not calc_sel:
+                    return ("❌ Select a calculator", "", "", "",
+                            [], [], [], gr.update(visible=False), gr.update(visible=False), {})
                 
                 if not metrics_calculator:
-                    return ("❌ MetricsCalculator not initialized", "", "",
-                            pd.DataFrame(), pd.DataFrame(),
-                            gr.update(visible=False), gr.update(visible=False))
+                    return ("❌ MetricsCalculator not initialized", "", "", "",
+                            [], [], [], gr.update(visible=False), gr.update(visible=False), {})
                 
-                # Load semantic colors if not already loaded
+                # Load semantic colors if not loaded
                 if not metrics_calculator.semantic_colors:
                     default_path = Path(config.DATA_DIR) / 'Semantic_configuration.json'
                     if default_path.exists():
                         metrics_calculator.load_semantic_colors(str(default_path))
-                    else:
-                        return ("❌ Please load semantic configuration first", "", "",
-                                pd.DataFrame(), pd.DataFrame(),
-                                gr.update(visible=False), gr.update(visible=False))
                 
-                # Get image paths
-                if source == "From Vision Analysis Results":
-                    vision_results = app_state.get_vision_results()
-                    if not vision_results:
-                        return ("❌ No vision analysis results", "", "",
-                                pd.DataFrame(), pd.DataFrame(),
-                                gr.update(visible=False), gr.update(visible=False))
-                    
-                    # Get semantic map paths from vision results
-                    image_paths = []
-                    for path, result in vision_results.items():
-                        name = os.path.basename(path).split('.')[0]
-                        sem_path = os.path.join(str(config.TEMP_DIR), f'vision_{name}', 'semantic_map.png')
-                        if os.path.exists(sem_path):
-                            image_paths.append(sem_path)
-                        else:
-                            image_paths.append(path)
+                ind_id = calc_sel.split(":")[0].strip()
+                module = metrics_calculator.load_calculator_module(ind_id)
+                
+                if not module:
+                    return (f"❌ Could not load calculator: {ind_id}", "", "", "",
+                            [], [], [], gr.update(visible=False), gr.update(visible=False), {})
+                
+                indicator = module.INDICATOR
+                calc_func = module.calculate_indicator
+                
+                # Get zones from app state or create default
+                query_zones = []
+                for z in app_state.project_query.spatial_zones:
+                    query_zones.append({
+                        'id': z.zone_id,
+                        'name': z.zone_name,
+                        'area_sqm': 0,
+                        'status': 'active'
+                    })
+                
+                # If no zones defined, create a default one
+                if not query_zones:
+                    query_zones = [{'id': 'zone_1', 'name': 'Default Zone', 'area_sqm': 0, 'status': 'active'}]
+                
+                all_zone_results = []
+                all_values = []
+                all_values_by_layer = {layer: [] for layer in LAYERS}
+                all_raw_results = []
+                
+                if mode == "Folder Structure (Stage 2.5)" and folder_path:
+                    # Stage 2.5 folder structure
+                    for zone in query_zones:
+                        zone_images = scan_zone_images(folder_path, zone['id'], LAYERS)
+                        total_zone_images = sum(len(f) for f in zone_images.values())
+                        
+                        if total_zone_images == 0:
+                            continue
+                        
+                        result = process_zone(zone, zone_images, calc_func, indicator)
+                        all_zone_results.append(result)
+                        all_values.extend(result['all_values'])
+                        
+                        for layer in LAYERS:
+                            all_values_by_layer[layer].extend(result['values_by_layer'].get(layer, []))
+                        
+                        # Collect raw results
+                        for layer, layer_data in result['layers'].items():
+                            for img_data in layer_data.get('images', []):
+                                all_raw_results.append({
+                                    'Zone': zone['name'],
+                                    'Layer': layer,
+                                    'Image': img_data.get('filename', ''),
+                                    'Value': img_data.get('value'),
+                                    'Unit': indicator.get('unit', '')
+                                })
+                
                 else:
+                    # Simple upload mode - treat as single zone, full layer
                     if not uploaded_files:
-                        return ("❌ No images uploaded", "", "",
-                                pd.DataFrame(), pd.DataFrame(),
-                                gr.update(visible=False), gr.update(visible=False))
-                    image_paths = [f.name for f in uploaded_files]
+                        return ("❌ Upload images or specify folder", "", "", "",
+                                [], [], [], gr.update(visible=False), gr.update(visible=False), {})
+                    
+                    zone = query_zones[0]
+                    zone_images = {'full': [f.name for f in uploaded_files]}
+                    
+                    # Also add empty lists for other layers
+                    for layer in LAYERS:
+                        if layer not in zone_images:
+                            zone_images[layer] = []
+                    
+                    result = process_zone(zone, zone_images, calc_func, indicator)
+                    all_zone_results.append(result)
+                    all_values.extend(result['all_values'])
+                    
+                    for layer in LAYERS:
+                        all_values_by_layer[layer].extend(result['values_by_layer'].get(layer, []))
+                    
+                    # Collect raw results
+                    for layer, layer_data in result['layers'].items():
+                        for img_data in layer_data.get('images', []):
+                            all_raw_results.append({
+                                'Zone': zone['name'],
+                                'Layer': layer,
+                                'Image': img_data.get('filename', ''),
+                                'Value': img_data.get('value'),
+                                'Unit': indicator.get('unit', '')
+                            })
                 
-                # Extract indicator IDs
-                indicator_ids = [sel.split(":")[0].strip() for sel in selected_calcs]
+                if not all_values:
+                    return ("❌ No values computed", "", "", "",
+                            [], [], [], gr.update(visible=False), gr.update(visible=False), {})
                 
-                # Calculate using MetricsCalculator
-                results_df_data = metrics_calculator.calculate_batch(indicator_ids, image_paths)
-                
-                if results_df_data.empty:
-                    return ("❌ No results calculated", "", "",
-                            pd.DataFrame(), pd.DataFrame(),
-                            gr.update(visible=False), gr.update(visible=False))
-                
-                # Calculate statistics per indicator
-                all_stats = []
-                for ind_id in indicator_ids:
-                    ind_data = results_df_data[
-                        (results_df_data['Indicator'] == ind_id) & 
-                        (results_df_data['Success'] == True)
-                    ]
-                    if not ind_data.empty and ind_data['Value'].notna().any():
-                        values = ind_data['Value'].dropna().tolist()
-                        if values:
-                            stats = calculate_statistics(values)
-                            stats['Indicator'] = ind_id
-                            stats['Name'] = ind_data['Name'].iloc[0] if len(ind_data) > 0 else ''
-                            stats['Unit'] = ind_data['Unit'].iloc[0] if len(ind_data) > 0 else ''
-                            all_stats.append(stats)
-                
-                stats_df_data = pd.DataFrame(all_stats) if all_stats else pd.DataFrame()
+                # Build output JSON
+                output = build_output_json(
+                    indicator, all_zone_results, all_values, all_values_by_layer,
+                    semantic_config_path=str(Path(config.DATA_DIR) / 'Semantic_configuration.json')
+                )
                 
                 # Store in app state
-                app_state.set_metrics_results(results_df_data)
+                app_state.set_metrics_results(pd.DataFrame(all_raw_results))
                 
-                success_count = results_df_data['Success'].sum()
+                # Prepare display data
+                overall_stats = output['descriptive_statistics_overall']
+                zone_stats = output['zone_statistics']
+                layer_stats = output['descriptive_statistics_by_layer']
+                
+                # Zone stats table
+                zone_df = pd.DataFrame(zone_stats) if zone_stats else pd.DataFrame()
+                
+                # Layer stats table
+                layer_data = []
+                for layer, stats in layer_stats.items():
+                    if stats.get('N', 0) > 0:
+                        layer_data.append({
+                            'Layer': layer,
+                            'N': stats.get('N', 0),
+                            'Mean': stats.get('Mean'),
+                            'Std': stats.get('Std'),
+                            'Min': stats.get('Min'),
+                            'Max': stats.get('Max')
+                        })
+                layer_df = pd.DataFrame(layer_data) if layer_data else pd.DataFrame()
+                
+                # Raw results table
+                raw_df = pd.DataFrame(all_raw_results) if all_raw_results else pd.DataFrame()
                 
                 return (
-                    f"✅ Calculation complete ({success_count} successful)",
-                    str(len(image_paths)),
-                    str(len(indicator_ids)),
-                    results_df_data,
-                    stats_df_data,
+                    f"✅ Computed {indicator['id']}",
+                    f"{indicator['id']}: {indicator['name']}",
+                    str(overall_stats.get('N', 0)),
+                    f"{overall_stats.get('Mean', 'N/A')} {indicator.get('unit', '')}",
+                    zone_df,
+                    layer_df,
+                    raw_df,
                     gr.update(visible=True),
-                    gr.update(visible=False)
+                    gr.update(visible=True),
+                    output
                 )
                 
             except Exception as e:
                 logger.error(f"Calculation error: {e}", exc_info=True)
-                return (f"❌ Error: {e}", "", "",
-                        pd.DataFrame(), pd.DataFrame(),
-                        gr.update(visible=False), gr.update(visible=False))
+                return (f"❌ Error: {e}", "", "", "",
+                        [], [], [], gr.update(visible=False), gr.update(visible=False), {})
         
-        def export_results():
+        def export_json(output_data):
+            if not output_data:
+                return gr.update(visible=False)
+            
             try:
-                results = app_state.get_metrics_results()
-                if results.empty:
-                    return gr.update(visible=False)
-                
                 output_dir = Path(config.OUTPUT_DIR)
                 output_dir.mkdir(parents=True, exist_ok=True)
                 
-                output_path = output_dir / f"calculation_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                ind_id = output_data.get('indicator_definition', {}).get('id', 'IND')
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                 
-                output = {
-                    'metadata': {
-                        'generated_at': datetime.now().isoformat(),
-                        'system': 'GreenSVC-AI Stage 2.5'
-                    },
-                    'results': results.to_dict(orient='records')
-                }
+                # Save timestamped and latest versions (like output_layer.py)
+                for filename in [f"{ind_id}_{timestamp}.json", f"{ind_id}_latest.json"]:
+                    filepath = output_dir / filename
+                    with open(filepath, 'w', encoding='utf-8') as f:
+                        json.dump(output_data, f, ensure_ascii=False, indent=2, default=str)
                 
-                with open(output_path, 'w', encoding='utf-8') as f:
-                    json.dump(output, f, ensure_ascii=False, indent=2, default=str)
-                
-                return gr.update(value=str(output_path), visible=True)
+                return gr.update(value=str(output_dir / f"{ind_id}_{timestamp}.json"), visible=True)
             except Exception as e:
                 logger.error(f"Export error: {e}")
                 return gr.update(visible=False)
         
-        # ===== Bind Events =====
-        load_semantic_btn.click(load_semantic_config, [semantic_file], [semantic_status])
-        image_source.change(toggle_upload, [image_source], [upload_row])
-        refresh_calcs_btn.click(refresh_calculators, outputs=[available_calcs, calc_info])
-        refresh_images_btn.click(refresh_images, [image_source, mask_upload], [image_info])
+        # ===== BIND EVENTS =====
+        load_config_btn.click(load_semantic, [semantic_file], [config_status])
+        input_mode.change(toggle_input_mode, [input_mode], [mask_folder_input, scan_btn])
+        refresh_btn.click(refresh_calcs, outputs=[calculator_dropdown])
+        calculator_dropdown.change(show_calc_info, [calculator_dropdown], [calc_details])
         
         calculate_btn.click(
             run_calculation,
-            [available_calcs, image_source, mask_upload],
-            [calc_status, total_images, total_indicators, results_df, stats_df, results_group, export_file]
+            [calculator_dropdown, input_mode, mask_folder_input, mask_upload],
+            [progress_text, result_indicator, result_total, result_mean,
+             zone_stats_table, layer_stats_table, raw_results_table,
+             results_group, export_group, output_json_state]
         )
         
-        export_btn.click(export_results, outputs=[export_file])
+        export_btn.click(export_json, [output_json_state], [export_file])
         
-        return {'results_df': results_df, 'stats_df': stats_df}
+        return {'zone_stats_table': zone_stats_table}
